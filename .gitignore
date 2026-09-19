@@ -1,0 +1,30 @@
+# datasets: fetched or regenerated, see README.md
+data/*/raw/
+data/*/clean/
+
+# python (analysis/)
+__pycache__/
+.venv/
+*.joblib
+
+# javascript (app/)
+node_modules/
+.expo/
+dist/
+web-build/
+*.tsbuildinfo
+.env
+.env.*.local
+
+# arduino / C (device/)
+build/
+*.o
+*.elf
+*.hex
+*.bin
+
+# editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

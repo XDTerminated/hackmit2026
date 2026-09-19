@@ -1,0 +1,13 @@
+[project]
+name = "fog-analysis"
+version = "0.1.0"
+description = "Data cleaning, detector evaluation and firmware reference for the freezing-of-gait detector"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "joblib",
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "scipy",
+]
