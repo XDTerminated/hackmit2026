@@ -24,7 +24,15 @@ Polyglot monorepo; each part has its own README and tooling, and the parts share
 
 Done: Daphnet cleaning, Freeze Index baseline, cue-logic simulation, streaming reference detector,
 test vectors, Mendeley download and cleaning, external validation on Mendeley, gyro experiment.
-Not started: any hardware, the C port, the Linux-side logger/API, the app.
+
+Done later that day: `analysis/src/device_server.py` (the real Linux-side server -- detector loop,
+SQLite event log, REST + WebSocket from `docs/api.md`, Daphnet/test-vector replay as the sample
+source); `app/` scaffolded on Expo SDK 57 with the three screens working against it; `CONTEXT.md`
+glossary; ADRs 0001 and 0002.
+
+Not started: the C port. Hardware exists but only as a test sketch (`device/GyroTestCodeWorking.ino`
+samples at +-2 g and prints text every 300 ms -- it is not a 64 Hz sampler). The app has never been
+rendered on a real phone, only bundled.
 
 ## The detector (frozen; port this)
 
@@ -147,8 +155,11 @@ CMSIS-DSP `arm_rfft_fast_f32` uses the same unnormalised FFT convention as NumPy
 
 ## Next steps
 
-1. `device/detector/`: C port, passing all four test vectors on a laptop.
-2. Mock server for `docs/api.md` in `analysis/` (replays Daphnet detections), then the real Linux-side
-   logger (SQLite + HTTP).
-3. Scaffold `app/` against a mock of that API.
-4. Hardware bring-up, own recordings, re-tune amplitude thresholds.
+1. Run `app/` on a real phone (Expo Go) against `device_server.py` and fix what rendering reveals.
+2. Hardware: replace the test sketch with a 64 Hz hardware-timer sampler at +-8 g streaming
+   `t_ms, acc_x..gyr_z` over the Bridge; confirm total band power is bimodal before trusting the
+   amplitude thresholds.
+3. Move `device_server.py` onto the UNO Q's Linux side and swap `CsvReplaySource` for a Bridge
+   source. Nothing else in the server should need to change.
+4. `device/detector/`: the C port, still the plan of record (ADR-0002), no longer on the demo path.
+5. Own recordings, then re-tune the amplitude thresholds -- on new recordings, never these.
