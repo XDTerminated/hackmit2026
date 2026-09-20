@@ -5,12 +5,14 @@ import { StatusBar } from 'expo-status-bar';
 import React, { useMemo, useState } from 'react';
 import {
   Pressable,
-  SafeAreaView,
   StyleSheet,
   Text,
   useColorScheme,
   View,
 } from 'react-native';
+// react-native's own SafeAreaView is deprecated and does nothing on Android, where Expo draws
+// edge to edge, so the title would sit under the status bar.
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ConnectionBanner } from './src/components/ui';
 import { HistoryScreen } from './src/screens/HistoryScreen';
 import { NowScreen } from './src/screens/NowScreen';
@@ -22,7 +24,7 @@ import { useMetronome } from './src/useMetronome';
 const TABS = ['Now', 'History', 'Settings'] as const;
 type Tab = (typeof TABS)[number];
 
-export default function App() {
+function Shell() {
   const scheme = useColorScheme();
   const theme = useMemo(() => makeTheme(scheme), [scheme]);
   const device = useDevice();
@@ -82,5 +84,13 @@ export default function App() {
         })}
       </View>
     </SafeAreaView>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <Shell />
+    </SafeAreaProvider>
   );
 }
