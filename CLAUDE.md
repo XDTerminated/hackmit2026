@@ -190,10 +190,18 @@ balanced caught 6/6, latency median 1.1 s (0.7-3.8 s), 1 false cue; catch_more 6
 - Latency tracks how strong the tremble is relative to the walking before it: a vigorous tremble (330,000 mg^2)
   flips the index in one frame, a gentle one (~6,000 after walking at 80,000) waits ~2.5-4 s for the walking
   to fade from the window.
-- Every false cue so far is the same thing: a normal stop. As walking power decays out of the window, a frame
-  or two sit at a few hundred mg^2 (above the 178 threshold) with the index above 1. Real and simulated
-  freezes hold thousands of mg^2, so a higher power threshold would remove it; do not change it on one
-  recording from one person. Re-check with more people, and tune on all but one held-out person.
+- Second person (`alex_1st`, same protocol): 6/6 caught, latency median 2.4 s (1.3-3.7 s), 1 false cue. Pooled,
+  balanced: 12/12 caught, median 2.1 s, 2 false cues in 8 min.
+- Both false cues are the same event: a normal stop. As walking power decays out of the window, the index drifts
+  above 1 for a frame or two while some power remains (Khai: at ~1,000 mg^2; Alex: already at 18,000 mg^2).
+  `stop_veto_experiment.py`: a higher power threshold does NOT generalise (Alex's stop sits above Khai's
+  freezes); a higher index threshold (1.75) removes both but slows everything (Khai 1.1 -> 2.0 s, max 7.3 s) and
+  loses patient episodes (Daphnet 95% -> 88%, Mendeley 91% -> 81%). **Candidate fix: stop veto** - ignore a window
+  whose band power is below 0.6 x the previous window's (a stop collapses by half or more per frame, a freeze
+  levels off): both false cues gone, 12/12 caught, latency unchanged, patients near neutral (Daphnet 225 -> 221 of
+  237, Mendeley 295 -> 291 of 324, false cues/h 51 -> 47 and 45 -> 48). The 0.6 was picked while looking at these two
+  recordings, so it is NOT adopted: check it first on a person it has never seen. If adopted it changes
+  `streaming_detector.py`, the test vectors and the firmware spec together.
 
 ## Conventions
 
