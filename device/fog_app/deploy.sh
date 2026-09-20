@@ -19,7 +19,7 @@ if [ "$action" = all ] || [ "$action" = copy ]; then
     "$ADB" shell "mkdir -p $REMOTE"
     for item in app.yaml sketch python assets; do "$ADB" push "$APP_DIR/$item" "$REMOTE/" | tail -1; done
     # The device API (what the phone app talks to) lives in analysis/src; ship it next to main.py.
-    for file in device_server.py streaming_detector.py; do
+    for file in device_server.py streaming_detector.py cadence.py; do
         "$ADB" push "$APP_DIR/../../analysis/src/$file" "$REMOTE/python/" | tail -1
     done
     "$ADB" shell "rm -rf $REMOTE/python/__pycache__"

@@ -33,10 +33,10 @@ sample rate and lost samples); `--verify` checks it against the batch code, `--c
 **Device (runs on the board).** `device/fog_app/` is the App Lab app: the sketch samples the IMU at 64 Hz and
 pushes each sample over the Bridge; `python/main.py` feeds two consumers. Port 8000 is the device API
 (`analysis/src/device_server.py`, Khai's server: presets and settings, SQLite event log, REST + WebSocket); it
-owns the cue and drives the buzzer at the wearer's tempo. Port 7000 is the diagnostics page (`fog_core.py`):
+owns the cue and plays it at the wearer's own cadence (auto tempo, `cadence.py`). Port 7000 is the diagnostics page (`fog_core.py`):
 live charts, sample-rate check, labelled recording. If the API cannot start, the page's detector drives the cue.
-`bash device/fog_app/deploy.sh` deploys over USB (App Lab's adb), ships `device_server.py` and
-`streaming_detector.py` with the app, and forwards both ports to localhost. The app is the board's startup app.
+`bash device/fog_app/deploy.sh` deploys over USB (App Lab's adb), ships `device_server.py`,
+`streaming_detector.py` and `cadence.py` with the app, and forwards both ports to localhost. The app is the board's startup app.
 Verified on the board: 64.0 Hz, no lost samples with both consumers, gravity 1047 mg, a still board reads
 1 mg^2, API reachable over USB and over the HackMIT Wi-Fi, WebSocket cue messages, no debug route.
 `device/bringup/` is the original wiring-test sketch. Wi-Fi: the board must share a network with the phone; a phone
@@ -105,6 +105,41 @@ the walking that preceded the freeze (patients' gait degrades gradually, which h
 The ramp dominates shortening the window. Steeper weighting or shorter windows go faster still (0.6 s) but false
 cues roughly double. Healthy data: 13 freeze bouts from 2 people in an external repo, labels pressed by hand, so
 the latencies are rough. The choice was made looking at all data, not nested.
+
+### Onset experiment (2026-09-20, `onset_experiment.py`): no cheap way to go faster
+
+Asked to remove the 2-3 s wait on the worn device. The phone and the server add ~0.1 s (first beat is immediate,
+cue message ~50 ms); the rest is detection. Per freeze on own recordings: debounce 0.5 s, frame period 0-0.5 s,
+and 0-3 s for the pre-freeze walking to fade from the window (a vigorous tremble flips the index in one frame,
+a gentle one after brisk walking takes 2-3 s). Tried, v3 thresholds, own median latency / own false cues /
+Daphnet / Mendeley (caught, false cues per hour):
+
+| candidate | own | Daphnet | Mendeley |
+|---|---|---|---|
+| balanced (debounce 2) | 2.1 s, 0 | 93%, 47 | 90%, 48 |
+| catch_more (debounce 1) | 1.6 s, 0 | 95%, 58 | 92%, 63 |
+| frames every 0.25 s, confirm 0.5 s | 1.8 s, 0 | 94%, 56 | 92%, 54 |
+| frames every 0.25 s, confirm 0.25 s | 1.6 s, 2 | 97%, 66 | 93%, 72 |
+| + fast path, weights^3, FI > 1.5 for 0.5 s | 1.5 s, 0 | 94%, 56 | 92%, 48 |
+| + fast path, weights^3, FI > 1.056 for 0.25 s | 0.8 s, 4 | 96%, 103 | 95%, 106 |
+
+It is one trade-off curve: ~0.5 s costs ~10 false cues/h on patients whichever way it is bought, and sub-second
+doubles them. The best fast path beats `catch_more` by 0.1 s on 12 hand-labelled freezes, which is noise, and
+would need a v4 spec (0.25 s frames, second FFT, new vectors). **Not adopted; `catch_more` is the fast setting.**
+A spectral detector has to see ~1-1.5 s of trembling. Patients' own latencies are shorter (Daphnet 1.2 s,
+Mendeley 1.5 s median) because their gait degrades into a freeze; the abrupt stop is a healthy-actor artefact.
+
+## Auto tempo (2026-09-20, `cadence.py`)
+
+The cue plays at the wearer's own cadence, measured on the device: stride time from the autocorrelation of the
+acceleration magnitude over 6 s windows that were steady walking end to end (loco > 10,000 mg^2, freeze index
+< 0.7, no cue), every 2 s, median of the last 5 min; cadence = 120 / stride time (one shin sees strides, the
+other leg's step is a weak peak at half the lag). `cadence.py --check`: all 49 estimates on own recordings within
+2.4 steps/min of the stride time from gyro swing peaks; Khai 100.5, Alex 90.6. Deliberately the usual cadence,
+not the seconds before the freeze (festination). Factor 1.0: Willems 2006 (-10%) and Arias & Cudeiro 2010 (+10%)
+disagree for freezers. Setting `tempo_auto` (default on), `status.cadence_spm` / `cue_tempo_bpm`; `tempo_bpm` is
+the fallback until ~10 s of steady walking. Remembered across restarts. Not checked on patient gait (shuffling
+steps may have a much weaker stride peak; below strength 0.4 no estimate is made and the fallback applies).
 
 ## Findings (v1 detector; Daphnet, leave-one-subject-out, 2 s Baechlin tolerance)
 

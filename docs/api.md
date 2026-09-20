@@ -37,7 +37,8 @@ updated object.
 | `cue_sound` | bool | `true` | | play an audible metronome at all |
 | `cue_output` | string | `"phone"` | `"buzzer"`, `"phone"` | where the audible metronome plays. The prototype has no buzzer fitted, so the phone is the default and the fallback below only blinks the board's LED. Only one at a time: two metronomes on two clocks drift apart, and an unsteady beat is worse than none |
 | `cue_vibration` | bool | `false` | | a pulse on the same beat: the phone vibrates when `cue_output` is `"phone"`, otherwise the device's vibration motor (not fitted on the prototype) |
-| `tempo_bpm` | int | `100` | 60 to 140 | metronome rate. Should be set to the wearer's comfortable stepping rate, ideally with their physio. Fast rates can make gait worse |
+| `tempo_auto` | bool | `true` | | play the cue at the wearer's own walking cadence, measured by the device (see Auto tempo below). Off: always `tempo_bpm` |
+| `tempo_bpm` | int | `100` | 60 to 140 | metronome rate when `tempo_auto` is off, and the fallback until a cadence has been measured. Should be set to the wearer's comfortable stepping rate, ideally with their physio. Fast rates can make gait worse |
 | `volume` | int | `70` | 0 to 100 | buzzer loudness |
 | `cue_min_seconds` | int | `5` | 3 to 15 | a cue plays at least this long, and keeps going while the freeze continues |
 | `log_events` | bool | `true` | | store freeze events |
@@ -58,6 +59,23 @@ app keeps the screen awake while it is open and closes its connection when it le
 device sees (`status.apps_connected` drops to 0) and answers by using its own output. With no buzzer fitted
 that output is only an LED, so on this prototype **an app that is not open means no audible cue**. Fitting the
 piezo (the sketch already drives `BUZZER_PIN`) turns that fallback back into a real one.
+
+### Auto tempo
+
+A cue helps most near the wearer's own comfortable cadence, and that differs between people (our two
+volunteers: 100 and 91 steps a minute). With `tempo_auto` the device measures it: whenever the last 6 s were
+steady walking (walking-level power, freeze index below 0.7, no cue playing) it takes the stride time from the
+autocorrelation of the shin acceleration, every 2 s, and keeps the median of the last 5 minutes of such
+estimates (`analysis/src/cadence.py`). One beat per step: tempo = cadence, limited to 60-140. On our
+recordings every estimate was within 2.4 steps/min of the stride time from the gyro.
+
+- The cadence is deliberately the wearer's *usual* one, never the last seconds before the freeze: steps
+  shorten and quicken into a freeze, and a beat matched to that would reinforce it.
+- A cue keeps the tempo it started with. `status.cadence_spm` is the measured cadence (`null` until there is
+  one) and `status.cue_tempo_bpm` is what a cue starting now would play.
+- The last cadence is remembered across restarts, and replaced as soon as the wearer has walked ~10 s.
+- The factor is 1.0 (`AUTO_TEMPO_FACTOR`): trials disagree on whether people who freeze do better 10% below
+  (Willems 2006) or 10% above (Arias & Cudeiro 2010) their cadence. A clinician would set this per patient.
 
 ### Sensitivity presets
 
@@ -102,6 +120,9 @@ are recordings from the real sensor.
   "state": "walking",
   "cue_active": false,
   "cue": null,
+  "cadence_spm": 98,
+  "cue_tempo_bpm": 98,
+  "apps_connected": 1,
   "paused_until": null,
   "events_today": 7,
   "uptime_s": 5321,

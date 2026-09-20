@@ -26,6 +26,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import math
 import os
 import queue
 import random
@@ -43,6 +44,7 @@ from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cadence import CadenceTracker  # noqa: E402
 from streaming_detector import DetectorParams, SampleClock, StreamingDetector  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -53,6 +55,11 @@ DB_PATH = Path(os.environ.get("FOG_DB", ROOT / "analysis" / "device.sqlite3"))
 FIRMWARE = "0.1.0"
 SAMPLE_RATE_HZ = 64
 STEP = 32  # samples per detector frame (0.5 s)
+TEMPO_RANGE_BPM = (60, 140)
+# Auto tempo: beats per step of the wearer's own measured cadence. The trials disagree on the best
+# offset for people who freeze (Willems 2006: 10% slower; Arias & Cudeiro 2010: 10% faster), so match it.
+AUTO_TEMPO_FACTOR = 1.0
+CADENCE_KEY = "measured_cadence_spm"   # settings table; not a user setting
 
 # docs/api.md: sensitivity presets. The thresholds live here, never in the app.
 PRESETS = {
@@ -70,6 +77,9 @@ DEFAULT_SETTINGS = {
     # device falls back to its own output, which on this hardware is only the on-board LED.
     "cue_output": "phone",
     "cue_vibration": False,
+    # True: the cue plays at the wearer's own walking cadence, measured on the device (cadence.py).
+    # tempo_bpm is then only the fallback until enough steady walking has been seen.
+    "tempo_auto": True,
     "tempo_bpm": 100,
     "volume": 70,
     "cue_min_seconds": 5,
@@ -83,7 +93,8 @@ SETTING_RULES = {
     "cue_sound": (bool, None),
     "cue_output": (str, ("buzzer", "phone")),
     "cue_vibration": (bool, None),
-    "tempo_bpm": (int, (60, 140)),
+    "tempo_auto": (bool, None),
+    "tempo_bpm": (int, TEMPO_RANGE_BPM),
     "volume": (int, (0, 100)),
     "cue_min_seconds": (int, (3, 15)),
     "log_events": (bool, None),
@@ -220,6 +231,11 @@ def save_settings(db, settings: dict) -> None:
     db.commit()
 
 
+def load_cadence(db) -> float | None:
+    row = db.execute("SELECT value FROM settings WHERE key = ?", (CADENCE_KEY,)).fetchone()
+    return float(json.loads(row["value"])) if row else None
+
+
 def event_row_to_json(row: sqlite3.Row) -> dict:
     return {
         "id": row["id"],
@@ -275,12 +291,23 @@ class Device:
     wearer_stopped: bool = False
     # Called with (on, tempo_bpm) when the device's own buzzer should start or stop.
     cue_hook: Callable[[bool, int], None] | None = None
+    cadence: CadenceTracker = field(default_factory=CadenceTracker)
+    saved_cadence: int | None = None
+
+    def cue_tempo(self) -> int:
+        """The tempo a cue starting now would play. A cue keeps the tempo it started with."""
+        measured = self.cadence.cadence_spm
+        if not self.settings["tempo_auto"] or measured is None:
+            return int(self.settings["tempo_bpm"])
+        low, high = TEMPO_RANGE_BPM
+        return int(min(max(round(measured * AUTO_TEMPO_FACTOR), low), high))
 
     def drive_buzzer(self, on: bool, output: str = "buzzer") -> None:
         if self.cue_hook is None:
             return
+        tempo = self.active_cue["tempo_bpm"] if self.active_cue else self.cue_tempo()
         with contextlib.suppress(Exception):   # a hardware hiccup must never break the event log
-            self.cue_hook(on and output == "buzzer", int(self.settings["tempo_bpm"]))
+            self.cue_hook(on and output == "buzzer", tempo)
 
     # -- time -------------------------------------------------------------
     def now(self) -> datetime:
@@ -320,6 +347,8 @@ class Device:
             "state": self.state,
             "cue_active": self.cue_active,
             "cue": self.active_cue,
+            "cadence_spm": self.cadence.cadence_spm and round(self.cadence.cadence_spm),
+            "cue_tempo_bpm": self.cue_tempo(),
             "apps_connected": len(self.clients),
             "paused_until": iso(self.paused_until) if self.paused_until else None,
             "events_today": self.count_today(),
@@ -344,6 +373,7 @@ class Device:
         output = self.settings["cue_output"]
         if output == "phone" and not self.clients:
             output = "buzzer"
+        tempo = self.cue_tempo()
         cursor = self.db.execute(
             "INSERT INTO events(start, trigger, peak_freeze_index, cue_sound, cue_vibration, "
             "cue_output, tempo_bpm, sensitivity) VALUES(?,?,?,?,?,?,?,?)",
@@ -354,7 +384,7 @@ class Device:
                 int(self.settings["cue_sound"]),
                 int(self.settings["cue_vibration"]),
                 output,
-                self.settings["tempo_bpm"],
+                tempo,
                 self.settings["sensitivity"],
             ),
         )
@@ -363,7 +393,7 @@ class Device:
         self.open_event = OpenEvent(id=cursor.lastrowid, started=self.now(),
                                     peak_fi=freeze_index, trigger=trigger)
         self.active_cue = {"event_id": self.open_event.id, "output": output,
-                           "tempo_bpm": self.settings["tempo_bpm"], "trigger": trigger}
+                           "tempo_bpm": tempo, "trigger": trigger}
         self.drive_buzzer(True, output)
         await self.broadcast("cue_started", self.active_cue)
 
@@ -443,7 +473,9 @@ class Device:
 
             frame = None
             for ax, ay, az in block:
-                got = detector.push(ax, ay, az)
+                magnitude = math.sqrt(ax * ax + ay * ay + az * az)
+                self.cadence.push(magnitude)
+                got = detector.push_magnitude(magnitude)
                 if got is not None:
                     frame = got
 
@@ -454,9 +486,19 @@ class Device:
                 elapsed = loop.time() - tick
                 await asyncio.sleep(max(0.0, period - elapsed))
 
+    def track_cadence(self, frame) -> None:
+        """Measure the wearer's cadence while they walk well; remember it across restarts."""
+        if self.cadence.on_frame(frame, self.cue_active) is None:
+            return
+        measured = self.cadence.cadence_spm
+        if measured is not None and round(measured) != self.saved_cadence:
+            self.saved_cadence = round(measured)
+            save_settings(self.db, {CADENCE_KEY: self.saved_cadence})
+
     async def on_frame(self, frame) -> None:
         walking = frame.loco_power > DetectorParams().walk_loco_power
         previous_state = self.state
+        self.track_cadence(frame)
 
         if self.open_event and self.open_event.watching_resume and walking:
             if self.open_event.resumed_s is None:
@@ -631,7 +673,7 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
         await device.broadcast(
             "cue_started",
             {"event_id": None, "output": device.settings["cue_output"],
-             "tempo_bpm": device.settings["tempo_bpm"], "trigger": "test"},
+             "tempo_bpm": device.cue_tempo(), "trigger": "test"},
         )
         device.drive_buzzer(True, device.settings["cue_output"])
 
@@ -784,7 +826,8 @@ def start_on_board(cue_hook: Callable[[bool, int], None] | None = None, port: in
     settings = load_settings(db)
     save_settings(db, settings)
     source = LiveSource()
-    device = Device(db=db, source=source, settings=settings, cue_hook=cue_hook)
+    device = Device(db=db, source=source, settings=settings, cue_hook=cue_hook,
+                    cadence=CadenceTracker(initial_spm=load_cadence(db)))
     config = uvicorn.Config(create_app(device, debug_routes=False), host="0.0.0.0", port=port, log_level="warning")
     threading.Thread(target=uvicorn.Server(config).run, daemon=True, name="device-server").start()
     return source

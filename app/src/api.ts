@@ -21,6 +21,8 @@ export type Status = {
   state: DeviceState;
   cue_active: boolean;
   cue: LiveCue | null;
+  cadence_spm?: number | null; // the wearer's measured walking cadence, steps per minute
+  cue_tempo_bpm?: number; // what a cue starting now would play
   apps_connected?: number;
   paused_until: string | null;
   events_today: number;
@@ -49,6 +51,7 @@ export type Settings = {
   cue_sound: boolean;
   cue_output: 'buzzer' | 'phone';
   cue_vibration: boolean;
+  tempo_auto: boolean;
   tempo_bpm: number;
   volume: number;
   cue_min_seconds: number;

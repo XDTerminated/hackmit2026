@@ -146,6 +146,11 @@ export function NowScreen({ theme, device }: { theme: Theme; device: Device }) {
           Sensitivity: {settings?.sensitivity.replace('_', ' ') ?? '—'} · sample rate{' '}
           {status?.sample_rate_hz ?? '—'} Hz
         </Text>
+        {settings?.tempo_auto && status?.cadence_spm ? (
+          <Text style={{ ...theme.font.label, color: theme.c.muted, marginTop: 4 }}>
+            Your walking pace: {status.cadence_spm} steps a minute. Cues play at that pace.
+          </Text>
+        ) : null}
         {status && Math.abs(status.sample_rate_hz - 64) > 1 ? (
           <Text style={{ ...theme.font.label, color: theme.c.text, marginTop: 4 }}>
             Sample rate has drifted from 64 Hz — the detector's frequency bands are off.

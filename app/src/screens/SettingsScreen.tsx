@@ -156,9 +156,20 @@ export function SettingsScreen({
               value={settings.cue_output === 'phone'}
               onChange={(on) => updateSettings({ cue_output: on ? 'phone' : 'buzzer' })}
             />
+            <ToggleRow
+              theme={theme}
+              title="Match my walking pace"
+              note={
+                status?.cadence_spm
+                  ? `The device measured ${status.cadence_spm} steps a minute while you walked. Cues play at that pace.`
+                  : 'Not measured yet: walk steadily for about ten seconds. Until then cues use the tempo below.'
+              }
+              value={settings.tempo_auto}
+              onChange={(on) => updateSettings({ tempo_auto: on })}
+            />
             <Row
               theme={theme}
-              title={`Tempo — ${settings.tempo_bpm} bpm`}
+              title={`${settings.tempo_auto ? 'Tempo until measured' : 'Tempo'} — ${settings.tempo_bpm} bpm`}
               note="Set it to a comfortable walking rate, ideally with a physio. Too fast can make gait worse."
               right={
                 <View style={{ flexDirection: 'row', gap: theme.space(2) }}>

@@ -9,6 +9,8 @@ log, feeds it 20 s of walking-like motion followed by a long steady tremble, and
   4. no new cue starts while the detector is still holding the same freeze
   5. a cue playing on the phone moves to the buzzer when the last app disconnects
   6. the replay-only debug route does not exist
+  7. auto tempo: the cue plays at the cadence measured during the walking (1.5 Hz in the magnitude is a
+     0.75 Hz stride seen from one shin, i.e. 90 steps a minute), and at tempo_bpm when auto is off
 
 Exits non-zero if any check fails. Needs the dev dependencies (websockets).
 
@@ -88,6 +90,9 @@ def main():
     status = wait_for(lambda s: s["cue_active"], 40)
     check("status carries the active cue", bool(status and status["cue"] and status["cue"]["trigger"] == "auto"),
           str(status and status["cue"]))
+    check("auto tempo follows the measured cadence",
+          bool(status and status["cadence_spm"] == 90 and status["cue"]["tempo_bpm"] == 90),
+          str(status and (status["cadence_spm"], status["cue"])))
 
     stopped = call("/cue/stop", "POST", {"feedback": "false_alarm"})
     events = call("/events?limit=10")["events"]
@@ -110,6 +115,10 @@ def main():
     on_phone, took_over = asyncio.run(phone_goes_away())
     check("cue plays on the phone while an app is connected", on_phone)
     check("buzzer takes over when the last app disconnects", took_over)
+
+    call("/settings", "PATCH", {"tempo_auto": False})
+    manual = call("/status")["cue_tempo_bpm"]
+    check("manual tempo when auto is off", manual == call("/settings")["tempo_bpm"], str(manual))
 
     try:
         call("/debug/freeze", "POST", {})
