@@ -1,23 +1,32 @@
 # device
 
-Everything that runs on the Arduino UNO Q. Nothing is implemented yet; this file records the plan.
+Everything that runs on the Arduino UNO Q.
 
-## Intended layout
+## What is here
 
-```
-device/
-  detector/     hardware-free C: detector.h / detector.c, plus a laptop test runner that feeds
-                ../test_vectors/*_input.csv and compares against *_expected.csv
-  <app lab project>/
-                the UNO Q App Lab app: the STM32 sketch (IMU sampling at 64 Hz, calls detector/,
-                drives the buzzer) and the Linux-side Python (event log in SQLite, HTTP API for the
-                mobile app). Create this with App Lab so the file structure matches what the tool
-                expects, then move it here.
-```
+| folder | status | what it is |
+|---|---|---|
+| `bringup/GyroTestCodeWorking.ino` | works on the board | first contact with the IMU: prints accel, gyro and compass readings about 3 times a second as text. Keep as a wiring test |
+| `imu_stream/imu_stream.ino` | **written, not yet compiled or run** | streams `t_us,ax_mg,ay_mg,az_mg,gx_dps,gy_dps,gz_dps` at 64 Hz with +-8 g, +-2000 deg/s and a 20 Hz low-pass. For recording data and for `analysis/src/check_recording.py` |
+| `fog_app/` | **runs on the board** (64.0 Hz, no lost samples); not yet tested on a leg | App Lab app: streams the IMU over the Bridge, runs the detector on the Linux side, serves a live web page on port 7000 over Wi-Fi, records labelled sessions. See its README |
+| `detector/` | not started | hardware-free C port of the detector, tested on a laptop against `../test_vectors/` |
 
-Keep `detector/` free of Arduino headers. It is the only part with a precise spec
-(`../test_vectors/README.md`), and it can be finished and proven correct on a laptop before any
-hardware works. The sketch then only has to deliver milli-g samples at a steady 64 Hz.
+Known from the bring-up sketch: the sensor is on **Wire2** (A4 = SDA, A5 = SCL), address **0x68**; plain
+`Wire` is the other SDA/SCL pair next to AREF. On the UNO Q every `Serial.print()` call reaches the Linux
+side as a separate message, so build output into one string and print it once. The chip can reset itself
+to sleep mode after a brief power dip (loose wire), losing its range settings; both sketches detect that
+and re-initialise.
+
+## Next steps on the board
+
+1. Flash `imu_stream`, capture a few minutes to a text file (stand still 30 s, walk 60 s, stand, walk),
+   and run `uv run src/check_recording.py <file>` in `analysis/`. It checks the rate, lost samples,
+   gravity scale, clipping, and whether still and walking separate in band power the way they do in the
+   patient data. Note the `who_am_i` value in the first line: it says which chip the breakout really has.
+2. Once that passes, record labelled sessions (walking / standing / simulated freezing, each state held
+   for 10 s or more) and re-check the amplitude thresholds.
+3. Port the detector: keep `detector/` free of Arduino headers so it can be proven against the test
+   vectors on a laptop, then call it from the sketch once per sample.
 
 ## Settings the data says matter
 
@@ -29,7 +38,15 @@ hardware works. The sketch then only has to deliver milli-g samples at a steady 
 - First milestone is streaming raw samples to the laptop as CSV (`t_ms, acc_x, acc_y, acc_z,
   gyr_x, gyr_y, gyr_z`), so the analysis scripts can be run on your own recordings.
 
+## Bridge and App Lab, from Arduino's published examples
+
+App layout: `app.yaml` (lists bricks), `sketch/sketch.ino` + `sketch.yaml` (platform `arduino:zephyr`),
+`python/main.py`, `assets/` (web page, needs `index.html`). Sketch side: `#include <Arduino_RouterBridge.h>`,
+`Bridge.begin()`, `Bridge.notify("name", args...)` to push data, `Bridge.provide("name", fn)` to be called.
+Python side: `from arduino.app_utils import *`, `Bridge.provide`, `Bridge.notify`, `Bridge.call`, `App.run()`.
+Web: `from arduino.app_bricks.web_ui import WebUI`, serves `assets/` on port 7000, `ui.expose_api(method, path, fn)`.
+Sources: github.com/arduino/app-bricks-examples, github.com/arduino/app-bricks-py, github.com/arduino-libraries/Arduino_RouterBridge.
+
 ## Not verified yet
 
-UNO Q I2C pin locations, power requirements, the current Bridge/RPC API, and the exact App Lab
-project structure. Check the official documentation before wiring or scaffolding.
+Power requirements, and everything in `fog_app/` and `imu_stream/` on real hardware.

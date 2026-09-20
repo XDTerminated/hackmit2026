@@ -58,20 +58,25 @@ FI_GRID = np.round(np.logspace(np.log10(0.3), np.log10(10), 40), 3)
 POWER_GRID = np.concatenate([[0], np.round(np.logspace(1, 5, 33))])  # mg^2
 
 
-def window_features(signal, win, step):
+def window_features(signal, win, step, ramp_power=0):
     """Freeze index and total band power for each sliding window of signal.
+
+    ramp_power > 0 weights the window from 0 (oldest sample) to 1 (newest), raised to that
+    power, so that old movement counts for less and the detector reacts sooner
+    (see latency_experiment.py). 0 is the plain rectangular window.
 
     Returns (freeze_index, total_power, end_idx), end_idx being the index of
     the last sample of each window.
     """
     n = (len(signal) - win) // step + 1
     idx = np.arange(win)[None, :] + step * np.arange(n)[:, None]
+    weights = np.linspace(0, 1, win) ** ramp_power if ramp_power else np.ones(win)
     frames = signal[idx]
-    frames = frames - frames.mean(axis=1, keepdims=True)
+    frames = (frames - np.average(frames, axis=1, weights=weights)[:, None]) * weights
 
     freqs = np.fft.rfftfreq(win, 1 / SAMPLE_RATE_HZ)
     # Scaled so that summing a band gives the signal variance in that band.
-    power = 2 * np.abs(np.fft.rfft(frames, axis=1)) ** 2 / win**2
+    power = 2 * np.abs(np.fft.rfft(frames, axis=1)) ** 2 / (win * (weights**2).sum())
     loco = power[:, (freqs >= LOCO_BAND_HZ[0]) & (freqs < LOCO_BAND_HZ[1])].sum(axis=1)
     freeze = power[:, (freqs >= FREEZE_BAND_HZ[0]) & (freqs <= FREEZE_BAND_HZ[1])].sum(axis=1)
 
@@ -115,13 +120,13 @@ def label_windows(freeze, end_idx):
     return dict(y=y, on_zone=on_zone, off_zone=off_zone)
 
 
-def load_subject(path, win, step):
+def load_subject(path, win, step, ramp_power=0):
     """Window every segment of one subject. Returns a list of per-segment dicts."""
     df = pd.read_csv(path)
     segments = []
     for _, seg in df.groupby("segment"):
         freeze = seg["freeze"].to_numpy().astype(bool)
-        fi, power, end_idx = window_features(seg["acc_mag"].to_numpy(), win, step)
+        fi, power, end_idx = window_features(seg["acc_mag"].to_numpy(), win, step, ramp_power)
         segments.append(dict(fi=fi, power=power, end_idx=end_idx, freeze=freeze,
                              **label_windows(freeze, end_idx)))
     return segments

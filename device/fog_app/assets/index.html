@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Freezing of Gait Monitor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="viz-root">
+    <header>
+      <h1>Freezing of Gait Monitor</h1>
+      <span id="link" class="pill">connecting…</span>
+    </header>
+    <p class="disclaimer">Prototype for a demo. Not a medical device.</p>
+
+    <section id="hero" class="hero" data-state="warming_up" aria-live="polite">
+      <span id="hero-icon" class="hero-icon" aria-hidden="true">…</span>
+      <div>
+        <div id="hero-label" class="hero-label">Waiting for data</div>
+        <div id="hero-detail" class="hero-detail">&nbsp;</div>
+      </div>
+    </section>
+
+    <section class="card response">
+      <div class="row" id="response" role="group" aria-label="Detector response">
+        <span class="row-label">Response</span>
+        <button data-response="balanced">Balanced</button>
+        <button data-response="fast">Fast</button>
+        <span class="muted-text">Fast starts the cue about half a second sooner, with more false alarms.</span>
+      </div>
+    </section>
+
+    <section class="tiles">
+      <div class="tile"><div class="tile-label">Freeze index</div><div id="t-fi" class="tile-value">–</div><div id="t-fi-note" class="tile-note">&nbsp;</div></div>
+      <div class="tile"><div class="tile-label">Movement power</div><div id="t-power" class="tile-value">–</div><div id="t-power-note" class="tile-note">&nbsp;</div></div>
+      <div class="tile"><div class="tile-label">Sample rate</div><div id="t-rate" class="tile-value">–</div><div id="t-rate-note" class="tile-note">&nbsp;</div></div>
+      <div class="tile"><div class="tile-label">Samples lost</div><div id="t-lost" class="tile-value">–</div><div id="t-lost-note" class="tile-note">&nbsp;</div></div>
+    </section>
+
+    <section class="card">
+      <h2>Movement, last 10 seconds</h2>
+      <p class="sub">Acceleration magnitude in milli-g. Flat near 1000 means standing still.</p>
+      <div class="chart"><canvas id="c-mag" height="180"></canvas><div class="tip" hidden></div></div>
+    </section>
+
+    <section class="card">
+      <h2>Freeze index, last 2 minutes</h2>
+      <p class="sub">Shaking-band power divided by walking-band power, one value every half second. Axis stops at 4; hover for exact values.</p>
+      <div class="chart"><canvas id="c-fi" height="200"></canvas><div class="tip" hidden></div></div>
+      <p class="key">
+        <span class="key-line"></span> counted
+        <span class="key-line muted"></span> ignored, too little movement
+        <span class="key-band"></span> cue playing
+      </p>
+      <details>
+        <summary>Show values as a table</summary>
+        <div class="table-wrap"><table id="frames-table">
+          <thead><tr><th>Seconds ago</th><th>Freeze index</th><th>Power (mg²)</th><th>State</th><th>Cue</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>Record a labelled session</h2>
+      <p class="sub">Someone watching presses the button (or key) for what the wearer is doing. Hold each state for at least 10 seconds. The file can be checked with <code>check_recording.py</code>.</p>
+      <div class="row">
+        <input id="rec-name" type="text" placeholder="name, e.g. alex_walk1" maxlength="40" aria-label="Recording name">
+        <button id="rec-toggle" class="primary">Start recording</button>
+        <span id="rec-info" class="muted-text"></span>
+      </div>
+      <div class="row" id="labels">
+        <button data-label="walking">Walking <kbd>W</kbd></button>
+        <button data-label="standing">Standing <kbd>S</kbd></button>
+        <button data-label="freezing">Freezing <kbd>F</kbd></button>
+        <button data-label="">No label <kbd>N</kbd></button>
+      </div>
+      <ul id="rec-list" class="rec-list"></ul>
+    </section>
+
+    <section class="card">
+      <h2>Detected events</h2>
+      <div class="table-wrap"><table id="events-table">
+        <thead><tr><th>#</th><th>Started</th><th>Duration</th><th>Peak freeze index</th></tr></thead>
+        <tbody><tr><td colspan="4" class="muted-text">None yet</td></tr></tbody>
+      </table></div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

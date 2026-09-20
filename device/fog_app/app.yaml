@@ -1,0 +1,6 @@
+name: Freezing of Gait Monitor
+icon: 🦿
+description: Streams the shin IMU to a web page over Wi-Fi, runs the freeze detector, and records labelled sessions
+
+bricks:
+  - arduino:web_ui

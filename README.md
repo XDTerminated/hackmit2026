@@ -22,7 +22,8 @@ build system on purpose: the three parts share no code, only the two contracts a
 
 ## The detector in one paragraph
 
-On the mean-removed acceleration magnitude (milli-g, 64 Hz), over a 4 s window every 0.5 s:
+On the acceleration magnitude (milli-g, 64 Hz), over a 4 s window every 0.5 s, mean-removed and weighted
+towards the most recent samples so that it reacts quickly:
 `freeze_index = power(3-8 Hz) / power(0.5-3 Hz)`; a window is positive when `freeze_index > 1.056`
 and `power(0.5-8 Hz) > 178 mg^2`. A cue starts after 2 consecutive positive windows if the wearer
 was walking in the last 5 s, plays for at least 5 s, and continues while windows stay positive.

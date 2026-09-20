@@ -34,6 +34,10 @@ class DetectorParams:
     sample_rate_hz: int = 64
     window: int = 256              # samples (4 s); FFT length
     step: int = 32                 # samples (0.5 s) between frames
+    # Window weights rise linearly from 0 (oldest sample) to 1 (newest), to this power. Old
+    # movement then counts for little, so a freeze straight after walking is caught ~1 s sooner
+    # for about the same false-alarm rate (latency_experiment.py). 0 = unweighted.
+    ramp_power: int = 1
     # FFT bin k is k * sample_rate / window = k * 0.25 Hz
     loco_bins: tuple = (2, 12)     # 0.5 Hz <= f < 3 Hz   -> k = 2..11
     freeze_bins: tuple = (12, 33)  # 3 Hz <= f <= 8 Hz    -> k = 12..32
@@ -66,6 +70,9 @@ class StreamingDetector:
     def reset(self):
         p = self.p
         self.buffer = np.zeros(p.window, self.dtype)
+        self.weights = (np.linspace(0, 1, p.window) ** p.ramp_power if p.ramp_power else np.ones(p.window)).astype(self.dtype)
+        self.weight_sum = self.weights.sum(dtype=self.dtype)
+        self.weight_sq_sum = (self.weights**2).sum(dtype=self.dtype)
         self.head = 0               # next write position
         self.n_samples = 0
         self.walk_history = [False] * p.gate_lookback_frames  # ring buffer of walking flags
@@ -90,12 +97,12 @@ class StreamingDetector:
 
     def _frame(self):
         p = self.p
-        # The ring buffer is not unrolled: a circular shift changes only the phase
-        # of the spectrum, and both the mean and |FFT|^2 ignore it.
-        x = self.buffer - self.buffer.mean(dtype=self.dtype)
-        spectrum = sp_fft.rfft(x)
+        # Put the ring buffer in time order (oldest first): the weights depend on sample age.
+        x = np.concatenate([self.buffer[self.head:], self.buffer[:self.head]])
+        weighted_mean = (x * self.weights).sum(dtype=self.dtype) / self.weight_sum
+        spectrum = sp_fft.rfft((x - weighted_mean) * self.weights)
         # Scaled so that a band sum is the signal variance inside that band (mg^2).
-        scale = self.dtype(2.0 / (p.window * p.window))
+        scale = self.dtype(2.0 / (p.window * self.weight_sq_sum))
         bin_power = (spectrum.real**2 + spectrum.imag**2) * scale
         loco = float(bin_power[p.loco_bins[0]:p.loco_bins[1]].sum(dtype=self.dtype))
         freeze = float(bin_power[p.freeze_bins[0]:p.freeze_bins[1]].sum(dtype=self.dtype))
@@ -146,7 +153,7 @@ def verify():
     for path in sorted(CLEAN_DIR.glob("S*.csv")):
         for _, seg in pd.read_csv(path).groupby("segment"):
             mag = seg["acc_mag"].to_numpy()
-            fi, power, _ = window_features(mag, p.window, p.step)
+            fi, power, _ = window_features(mag, p.window, p.step, p.ramp_power)
             cue = cue_logic(fi, power, p.fi_threshold, p.power_threshold, cfg)
 
             got = run(exact, magnitudes=mag)

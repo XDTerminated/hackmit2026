@@ -24,13 +24,21 @@ Polyglot monorepo; each part has its own README and tooling, and the parts share
 
 Done: Daphnet cleaning, Freeze Index baseline, cue-logic simulation, streaming reference detector,
 test vectors, Mendeley download and cleaning, external validation on Mendeley, gyro experiment.
-Not started: any hardware, the C port, the Linux-side logger/API, the app.
+Hardware: IMU bring-up works on the board (`device/bringup/`); `device/imu_stream/` (64 Hz CSV streamer)
+is written but not yet compiled or run; `analysis/src/check_recording.py` validates a capture from it.
+`device/fog_app/` is an App Lab app (sketch -> Bridge -> Python detector -> web page on port 7000 over Wi-Fi, with
+labelled recording). It runs on the board as of 2026-09-19: 64.0 Hz over the Bridge with no lost samples, gravity
+reads 1047 mg, a still board reads 1 mg^2. Deploy over USB with `bash device/fog_app/deploy.sh` (uses App Lab's adb;
+also forwards the page to http://localhost:7000). It is set as the board's startup app, so it runs from a power
+bank with no laptop. Not yet tested worn on a leg.
+Not started: the C port, persistent event storage, the settings API and the mobile app (contract drafted in `docs/api.md`).
 
-## The detector (frozen; port this)
+## The detector (v2, recency-weighted; port this)
 
-Input: acceleration magnitude in **milli-g** at **64 Hz**. Window 256 samples (4 s), step 32 (0.5 s),
-mean removed, no window function, 256-point FFT, bin k = k x 0.25 Hz, `bin_power = |Y|^2 * 2 / 256^2`
-(so a band sum is the variance in that band, mg^2).
+Input: acceleration magnitude in **milli-g** at **64 Hz**. Window 256 samples (4 s), step 32 (0.5 s), in time
+order, weighted `w[i] = i/255` (oldest 0, newest 1), weighted mean removed, 256-point FFT, bin k = k x 0.25 Hz,
+`bin_power = |Y|^2 * 2 / (256 * sum(w^2))` (so a band sum is the weighted variance in that band, mg^2).
+v1 was the same with no weighting; every Daphnet/Mendeley number below marked (v1) was measured with it.
 
     loco   = sum(bins 2..11)     # 0.5-3 Hz
     freeze = sum(bins 12..32)    # 3-8 Hz
@@ -42,9 +50,27 @@ frames had `loco > 10000` (walking gate); hold at least 10 frames; keep playing 
 continuation dropped sensitivity to 0.28).
 
 Reference: `analysis/src/streaming_detector.py`. It matches the batch code on all 35,405 Daphnet
-frames with zero cue mismatches, and float32 changes no decisions, so single-precision on the STM32 is safe.
+frames with zero cue mismatches, and float32 changes no decisions (v2 re-verified), so single-precision on the
+STM32 is safe. The ring buffer must be read in time order now (v1 could skip that).
 
-## Findings (Daphnet, leave-one-subject-out, 2 s Baechlin tolerance)
+## Latency and the weighted window (2026-09-19)
+
+On the real board the cue lagged 3-4 s after an abrupt simulated freeze. Cause: the 4 s window is dominated by
+the walking that preceded the freeze (patients' gait degrades gradually, which hid this in the datasets).
+`latency_experiment.py`, cue logic gate + hold, debounce 2, thresholds unchanged:
+
+| window | healthy sim. freeze latency (median / worst) | Daphnet caught, false cues/h | Mendeley caught, false cues/h |
+|---|---|---|---|
+| v1: rect 4 s | 2.4 / 4.0 s | 91%, 47 | 88%, 37 |
+| rect 2 s | 1.8 / 3.3 s | 95%, 71 | 93%, 60 |
+| **v2: linear ramp 4 s** | 1.8 / 3.0 s | 95%, 51 | 91%, 45 |
+| v2 with debounce 1 ("fast") | 1.2 / 2.5 s | 96%, 61 | 92%, 61 |
+
+The ramp dominates shortening the window. Steeper weighting or shorter windows go faster still (0.6 s) but false
+cues roughly double. Healthy data: 13 freeze bouts from 2 people in an external repo, labels pressed by hand, so
+the latencies are rough. The choice was made looking at all data, not nested.
+
+## Findings (v1 detector; Daphnet, leave-one-subject-out, 2 s Baechlin tolerance)
 
 - Raw detector: sens 0.91 / spec 0.84, 226/237 episodes, but **120 false cues per hour**.
   Published subject-independent baseline (Baechlin 2010): 0.73 / 0.82.
@@ -142,7 +168,15 @@ Sample from a hardware timer. IMU low-pass ~20-40 Hz. Convert to mg first. First
 raw CSV to the laptop and confirm total band power is bimodal (tens of mg^2 still, >10^4 walking);
 if not, the amplitude thresholds need shifting before any C is written.
 
-Unverified: UNO Q I2C pins and power needs, Bridge/RPC API, App Lab project structure, and whether
+Known from bring-up: IMU on Wire2 (A4/A5), address 0x68; each `Serial.print()` reaches the Linux side as a
+separate message (batch output into one print); the chip can drop back to sleep after a power dip and must
+be re-initialised. The GY-9250 breakout reports WHO_AM_I 0x68: an MPU6050/9150-class chip, not an MPU-9250 (same family as Mendeley's sensor).
+
+Bridge/App Lab API is documented in `device/README.md` (taken from Arduino's example repos, not yet exercised by us).
+On Windows, a Python HTTP server bound to IPv4 only makes every `localhost` request take 2 s (IPv6 tried first);
+`dev_server.py` listens dual-stack for that reason.
+
+Unverified: UNO Q power needs, anything in `device/` on real hardware, and whether
 CMSIS-DSP `arm_rfft_fast_f32` uses the same unnormalised FFT convention as NumPy.
 
 ## Next steps
@@ -151,4 +185,5 @@ CMSIS-DSP `arm_rfft_fast_f32` uses the same unnormalised FFT convention as NumPy
 2. Mock server for `docs/api.md` in `analysis/` (replays Daphnet detections), then the real Linux-side
    logger (SQLite + HTTP).
 3. Scaffold `app/` against a mock of that API.
-4. Hardware bring-up, own recordings, re-tune amplitude thresholds.
+4. Flash `imu_stream`, run `check_recording.py` on a capture, then own labelled recordings and re-check
+   the amplitude thresholds.

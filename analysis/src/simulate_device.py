@@ -173,6 +173,8 @@ def main():
     parser.add_argument("--fixed-thresholds", type=float, nargs=2, metavar=("FI", "POWER"), default=None,
                         help="use these detector thresholds for every subject instead of tuning them; "
                              "with a dataset the thresholds never saw, this is an external validation")
+    parser.add_argument("--ramp", type=int, default=0,
+                        help="recency weighting of the window: 0 = none (original detector), 1 = linear ramp (current detector)")
     parser.add_argument("--per-subject", metavar="CUE_LOGIC", default=None,
                         help="also print per-subject results for the named cue logic")
     args = parser.parse_args()
@@ -181,7 +183,7 @@ def main():
     files = sorted(clean_dir(args.dataset).glob("*.csv"))
     if not files:
         raise SystemExit(f"No cleaned data in {clean_dir(args.dataset)}; run clean_{args.dataset}.py first")
-    data = {f.stem: load_subject(f, win, step) for f in files}
+    data = {f.stem: load_subject(f, win, step, args.ramp) for f in files}
     subjects = list(data)
 
     grid = {s: grid_counts(data[s], 1) for s in subjects}
@@ -203,7 +205,7 @@ def main():
     pd.set_option("display.width", 200)
     tuning = (f"fixed at FI > {args.fixed_thresholds[0]:g}, power > {args.fixed_thresholds[1]:g}" if args.fixed_thresholds
               else "tuned LOSO for " + ("balanced accuracy" if args.min_spec is None else f"raw specificity >= {args.min_spec}"))
-    print(f"{args.dataset}, window {args.window:g} s, thresholds {tuning}")
+    print(f"{args.dataset}, window {args.window:g} s, ramp {args.ramp}, thresholds {tuning}")
     print(pd.DataFrame(rows).to_string(index=False, float_format=lambda v: f"{v:.2f}"))
     if args.per_subject:
         cfg = next(c for c in CONFIGS if c.name == args.per_subject)

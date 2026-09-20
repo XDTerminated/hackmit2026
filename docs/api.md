@@ -40,14 +40,17 @@ device rejects a change that would silence both.
 
 ### Sensitivity presets
 
-All presets use the 4 s window and the walking gate + 5 s hold. Results are episodes caught and
+All presets use the 4 s recency-weighted window and the walking gate + 5 s hold. Results are episodes caught and
 false cues per hour on the two patient datasets (Mendeley was never used for tuning).
 
 | preset | freeze index > | band power > | consecutive windows | Daphnet | Mendeley |
 |---|---|---|---|---|---|
-| `catch_more` | 1.056 | 178 mg^2 | 1 | 93%, 58/h | 90%, 49/h |
-| `balanced` | 1.056 | 178 mg^2 | 2 | 91%, 47/h | 88%, 37/h |
-| `fewer_alerts` | 1.656 | 13,335 mg^2 | 2 | 79%, 19/h | 70%, 18/h |
+| `catch_more` | 1.056 | 178 mg^2 | 1 | 96%, 61/h | 92%, 61/h |
+| `balanced` | 1.056 | 178 mg^2 | 2 | 95%, 51/h | 91%, 45/h |
+| `fewer_alerts` | 1.656 | 13,335 mg^2 | 2 | 84%, 26/h | 74%, 22/h |
+
+`catch_more` is also the fast-response setting: on healthy volunteers simulating a freeze straight after
+walking, median time to cue was 1.2 s against 1.8 s for `balanced` (the web app calls these Fast and Balanced).
 
 These rates are for Parkinson's patients in provocation protocols. They are not predictions for
 the prototype or for healthy volunteers, and the amplitude thresholds may need shifting once there

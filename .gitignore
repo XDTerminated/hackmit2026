@@ -2,6 +2,9 @@
 data/*/raw/
 data/*/clean/
 
+# recordings made through the web app
+device/fog_app/data/
+
 # python (analysis/)
 __pycache__/
 .venv/
