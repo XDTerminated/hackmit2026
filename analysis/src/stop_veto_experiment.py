@@ -13,8 +13,10 @@ threshold while there is still some power left. Three candidate fixes, scored on
                                   in a freeze it levels off.
 
 All use the recency-weighted 4 s window and the cue logic gate 5 s + hold 5 s + debounce 2.
-NOTE: the veto ratio was chosen while looking at the two recordings it is scored on here. It is a
-candidate, not a result, until it has been checked on a person it has never seen.
+NOTE: the veto ratio (0.6) was chosen while looking at the two recordings it is scored on here. On
+independent healthy recordings it changed nothing (no harm, no benefit shown), and on patients it
+costs about 1.5% of episodes. It was adopted as the detector's default on that basis: provisional,
+and the first thing to re-check when a new person is recorded.
 
 Usage: python src/stop_veto_experiment.py
 """
@@ -24,7 +26,7 @@ import pandas as pd
 
 from baseline_fi import clean_dir, label_windows, score_subject, summary_row, window_features
 from evaluate_own import HOLD_TAIL_S, RAW_DIR, bouts
-from simulate_device import CueConfig, cue_logic
+from simulate_device import CueConfig, cue_logic, stop_veto
 
 WIN, STEP, RAMP, RATE = 256, 32, 1, 64
 CUE = CueConfig("gate 5s + hold 5s + debounce 2", debounce=2, gate_lookback_s=5, hold_s=5)
@@ -37,14 +39,6 @@ CANDIDATES = [  # (name, freeze-index threshold, power threshold, veto ratio)
     ("stop veto 0.6", 1.056, 178.0, 0.6),
     ("stop veto 0.7", 1.056, 178.0, 0.7),
 ]
-
-
-def stop_veto(power, ratio):
-    """True where band power is still collapsing: a stop in progress, not a freeze."""
-    if ratio is None:
-        return None
-    previous = np.concatenate([[power[0]], power[:-1]])
-    return power < ratio * previous
 
 
 def cues_for(magnitude, fi_th, power_th, ratio):

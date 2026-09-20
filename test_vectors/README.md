@@ -29,7 +29,7 @@ Feed the rows in order into a freshly reset detector.
 |---|---|
 | `walk_then_freeze` | an early positive run is ignored (no walking yet), then the cue starts when walking runs into a freeze and holds for 5 s |
 | `standing_still` | power stays under the threshold, nothing fires |
-| `gate_blocked` | one legitimate cue, then long positive runs with no recent walking: cue must stay off |
+| `gate_blocked` | one legitimate cue, then long positive runs with no recent walking: cue must stay off. Also contains frames the stop rule rejects |
 | `long_freeze` | the cue keeps playing through a ~30 s freeze even though the walking gate lapses after 5 s |
 
 ## The algorithm, per sample
@@ -49,7 +49,11 @@ Feed the rows in order into a freshly reset detector.
       (weighted) signal variance inside that band, in mg².
    5. `loco = sum(bin_power[2..11])` (0.5 to 2.75 Hz), `freeze = sum(bin_power[12..32])` (3 to 8 Hz), both inclusive.
    6. `freeze_index = freeze / max(loco, 1e-9)`, `total = loco + freeze`.
-   7. `positive = freeze_index > 1.056 && total > 178`.
+   7. `stopping = have_previous && total < 0.6 × previous_total`, then `previous_total = total`
+      (there is no previous frame for the first one, so it is never `stopping`).
+      Why: when the wearer simply stops walking, band power collapses by half or more every frame
+      and the index drifts over its threshold on the way down; in a freeze the power levels off.
+   8. `positive = freeze_index > 1.056 && total > 178 && !stopping`.
 3. Cue state machine, once per frame (`i` = frame counter):
 
 ```

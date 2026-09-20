@@ -54,17 +54,19 @@ its timers suspended), which hands the cue to the buzzer in the same way.
 
 ### Sensitivity presets
 
-All presets use the 4 s recency-weighted window and the walking gate + 5 s hold. Results are episodes caught and
+All presets use the 4 s recency-weighted window, the stop rule (a window whose power is still collapsing is
+the wearer stopping, not freezing) and the walking gate + 5 s hold. Results are episodes caught and
 false cues per hour on the two patient datasets (Mendeley was never used for tuning).
 
 | preset | freeze index > | band power > | consecutive windows | Daphnet | Mendeley |
 |---|---|---|---|---|---|
-| `catch_more` | 1.056 | 178 mg^2 | 1 | 96%, 61/h | 92%, 61/h |
-| `balanced` | 1.056 | 178 mg^2 | 2 | 95%, 51/h | 91%, 45/h |
-| `fewer_alerts` | 1.656 | 13,335 mg^2 | 2 | 84%, 26/h | 74%, 22/h |
+| `catch_more` | 1.056 | 178 mg^2 | 1 | 95%, 58/h | 92%, 63/h |
+| `balanced` | 1.056 | 178 mg^2 | 2 | 93%, 47/h | 90%, 48/h |
+| `fewer_alerts` | 1.656 | 13,335 mg^2 | 2 | 82%, 23/h | 73%, 23/h |
 
 `catch_more` is also the fast-response setting: on healthy volunteers simulating a freeze straight after
-walking, median time to cue was 1.2 s against 1.8 s for `balanced`.
+walking, median time to cue was 1.2 s against 1.8 s for `balanced`. On our own two volunteers (12 simulated
+freezes) both presets caught 12/12 with no false cues, at a median 1.6 s and 2.1 s.
 
 These rates are for Parkinson's patients in provocation protocols. They are not predictions for
 the prototype or for healthy volunteers, and the amplitude thresholds may need shifting once there

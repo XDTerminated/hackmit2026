@@ -63,16 +63,19 @@ alternative.
 
 Not done: a worn test; own labelled recordings; the C port (`device/detector/`, deferred by ADR 0002).
 
-## The detector (v2, recency-weighted; port this)
+## The detector (v3: recency-weighted window + stop rule; port this)
 
 Input: acceleration magnitude in **milli-g** at **64 Hz**. Window 256 samples (4 s), step 32 (0.5 s), in time
 order, weighted `w[i] = i/255` (oldest 0, newest 1), weighted mean removed, 256-point FFT, bin k = k x 0.25 Hz,
 `bin_power = |Y|^2 * 2 / (256 * sum(w^2))` (so a band sum is the weighted variance in that band, mg^2).
-v1 was the same with no weighting; every Daphnet/Mendeley number below marked (v1) was measured with it.
+v1 had no weighting and no stop rule; v2 added the weighting; v3 (current, 2026-09-20) adds the stop rule.
+Every Daphnet/Mendeley number below marked (v1) was measured with v1.
 
     loco   = sum(bins 2..11)     # 0.5-3 Hz
     freeze = sum(bins 12..32)    # 3-8 Hz
-    positive = freeze/loco > 1.056 and loco + freeze > 178
+    total    = loco + freeze
+    stopping = total < 0.6 * previous frame's total        # never on the first frame
+    positive = freeze/loco > 1.056 and total > 178 and not stopping
 
 Cue logic per frame: start a cue after 2 consecutive positive frames if at least 2 of the last 10
 frames had `loco > 10000` (walking gate); hold at least 10 frames; keep playing while positive.
@@ -200,8 +203,13 @@ balanced caught 6/6, latency median 1.1 s (0.7-3.8 s), 1 false cue; catch_more 6
   whose band power is below 0.6 x the previous window's (a stop collapses by half or more per frame, a freeze
   levels off): both false cues gone, 12/12 caught, latency unchanged, patients near neutral (Daphnet 225 -> 221 of
   237, Mendeley 295 -> 291 of 324, false cues/h 51 -> 47 and 45 -> 48). The 0.6 was picked while looking at these two
-  recordings, so it is NOT adopted: check it first on a person it has never seen. If adopted it changes
-  `streaming_detector.py`, the test vectors and the firmware spec together.
+  recordings. No third volunteer was available, so it was checked on the only unseen healthy data we have (the
+  external repo, 2 other people): no change at all (13/14 caught, same latency, same false cues), i.e. harmless
+  there but no benefit shown. **Adopted 2026-09-20 as `DetectorParams.stop_veto_ratio = 0.6` (0 disables), and
+  explicitly provisional**: its benefit is only demonstrated on the two recordings it was tuned on. With it, own
+  recordings: balanced 12/12, 0 false cues, median 2.1 s; catch_more 12/12, 0 false cues, 1.6 s. Patients, balanced:
+  Daphnet 221/237 (93%) at 47/h, Mendeley 291/324 (90%) at 48/h. First thing to re-check on any new person,
+  especially a stop-and-start session with no freezes.
 
 ## Conventions
 

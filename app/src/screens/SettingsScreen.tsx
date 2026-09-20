@@ -9,9 +9,9 @@ import { Theme } from '../theme';
 import { Device } from '../useDevice';
 
 const SENSITIVITY: { key: Settings['sensitivity']; title: string; note: string }[] = [
-  { key: 'catch_more', title: 'Catch more', note: '96% of freezes caught, ~61 false cues an hour. Fastest to respond' },
-  { key: 'balanced', title: 'Balanced', note: '95% caught, ~51 false cues an hour' },
-  { key: 'fewer_alerts', title: 'Fewer false cues', note: '84% caught, ~26 false cues an hour' },
+  { key: 'catch_more', title: 'Catch more', note: '95% of freezes caught, ~58 false cues an hour. Fastest to respond' },
+  { key: 'balanced', title: 'Balanced', note: '93% caught, ~47 false cues an hour' },
+  { key: 'fewer_alerts', title: 'Fewer false cues', note: '82% caught, ~23 false cues an hour' },
 ];
 
 // A setting that is on or off. The switch is named for screen readers by the row's title.

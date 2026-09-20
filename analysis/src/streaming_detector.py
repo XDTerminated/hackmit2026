@@ -54,6 +54,10 @@ class DetectorParams:
     freeze_bins: tuple = (12, 33)  # 3 Hz <= f <= 8 Hz    -> k = 12..32
     fi_threshold: float = 1.056
     power_threshold: float = 178.0       # mg^2, loco + freeze band power
+    # A window whose band power is below this fraction of the previous window's is never positive:
+    # power that is still collapsing is the wearer stopping, not freezing (0 disables the rule).
+    # Provisional: tuned on two volunteers, see stop_veto_experiment.py.
+    stop_veto_ratio: float = 0.6
     walk_loco_power: float = 10_000.0    # mg^2, loco band power that counts as walking
     debounce_frames: int = 2
     gate_lookback_frames: int = 10       # 5 s
@@ -121,6 +125,7 @@ class StreamingDetector:
         self.consecutive = 0
         self.cue_on = False
         self.hold_end = 0           # frame number before which the cue may not stop
+        self.previous_power = None  # band power of the previous frame, for the stop veto
         self.n_frames = 0
 
     def push(self, ax_mg, ay_mg, az_mg):
@@ -150,7 +155,9 @@ class StreamingDetector:
 
         freeze_index = freeze / max(loco, 1e-9)
         total = loco + freeze
-        positive = freeze_index > p.fi_threshold and total > p.power_threshold
+        stopping = self.previous_power is not None and total < p.stop_veto_ratio * self.previous_power
+        self.previous_power = total
+        positive = freeze_index > p.fi_threshold and total > p.power_threshold and not stopping
 
         # Cue state machine (same as simulate_device.cue_logic)
         i = self.n_frames
@@ -181,7 +188,7 @@ def run(detector, magnitudes=None, axes=None):
 
 def verify():
     from baseline_fi import STEP_S, window_features
-    from simulate_device import CueConfig, cue_logic
+    from simulate_device import CueConfig, cue_logic, stop_veto
 
     p = DetectorParams()
     cfg = CueConfig("reference", debounce=p.debounce_frames, gate_lookback_s=p.gate_lookback_frames * STEP_S,
@@ -195,7 +202,7 @@ def verify():
         for _, seg in pd.read_csv(path).groupby("segment"):
             mag = seg["acc_mag"].to_numpy()
             fi, power, _ = window_features(mag, p.window, p.step, p.ramp_power)
-            cue = cue_logic(fi, power, p.fi_threshold, p.power_threshold, cfg)
+            cue = cue_logic(fi, power, p.fi_threshold, p.power_threshold, cfg, stop_veto(power, p.stop_veto_ratio))
 
             got = run(exact, magnitudes=mag)
             n_frames += len(got)

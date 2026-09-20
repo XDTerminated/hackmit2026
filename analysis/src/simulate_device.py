@@ -68,6 +68,19 @@ NESTED_GRID = [
 ]
 
 
+def stop_veto(power, ratio):
+    """True where band power is below ratio x the previous window's: a stop in progress.
+
+    When the wearer simply stops walking, power collapses by half or more every 0.5 s, and on the
+    way down the freeze index drifts above its threshold for a frame or two. In a freeze the
+    power levels off instead. ratio 0 (or None) disables the rule. See stop_veto_experiment.py.
+    """
+    if not ratio:
+        return None
+    previous = np.concatenate([[power[0]], power[:-1]])
+    return power < ratio * previous
+
+
 def cue_logic(fi, power, fi_th, power_th, cfg, veto=None):
     """Run the cue state machine over one segment's frames. Returns cue on/off per frame.
 
@@ -157,6 +170,9 @@ def main():
                              "with a dataset the thresholds never saw, this is an external validation")
     parser.add_argument("--ramp", type=int, default=0,
                         help="recency weighting of the window: 0 = none (original detector), 1 = linear ramp (current detector)")
+    parser.add_argument("--stop-veto", type=float, default=0.0, metavar="RATIO",
+                        help="ignore windows whose power is below RATIO x the previous window's "
+                             "(0 = off, the original detector; 0.6 = current detector)")
     parser.add_argument("--per-subject", metavar="CUE_LOGIC", default=None,
                         help="also print per-subject results for the named cue logic")
     args = parser.parse_args()
@@ -176,7 +192,9 @@ def main():
     if args.fixed_thresholds:
         thresholds = {s: tuple(args.fixed_thresholds) for s in subjects}
 
-    rows = [summary_row([simulate_subject(data[s], *thresholds[s], cfg) for s in subjects], **{"cue logic": cfg.name})
+    vetoes = {s: [stop_veto(seg["power"], args.stop_veto) for seg in data[s]] for s in subjects}
+    rows = [summary_row([simulate_subject(data[s], *thresholds[s], cfg, vetoes[s]) for s in subjects],
+                        **{"cue logic": cfg.name})
             for cfg in CONFIGS]
     if args.nested is not None:
         results, chosen = nested_selection(data, thresholds, args.nested)
@@ -185,11 +203,12 @@ def main():
     pd.set_option("display.width", 200)
     tuning = (f"fixed at FI > {args.fixed_thresholds[0]:g}, power > {args.fixed_thresholds[1]:g}" if args.fixed_thresholds
               else "tuned LOSO for " + ("balanced accuracy" if args.min_spec is None else f"raw specificity >= {args.min_spec}"))
-    print(f"{args.dataset}, window {args.window:g} s, ramp {args.ramp}, thresholds {tuning}")
+    print(f"{args.dataset}, window {args.window:g} s, ramp {args.ramp}, stop veto {args.stop_veto:g}, thresholds {tuning}")
     print(pd.DataFrame(rows).to_string(index=False, float_format=lambda v: f"{v:.2f}"))
     if args.per_subject:
         cfg = next(c for c in CONFIGS if c.name == args.per_subject)
-        per_subject = [summary_row([simulate_subject(data[s], *thresholds[s], cfg)], subject=s) for s in subjects]
+        per_subject = [summary_row([simulate_subject(data[s], *thresholds[s], cfg, vetoes[s])], subject=s)
+                       for s in subjects]
         print()
         print(f"Per subject, cue logic: {cfg.name}")
         print(pd.DataFrame(per_subject).to_string(index=False, float_format=lambda v: f"{v:.2f}", na_rep="-"))
