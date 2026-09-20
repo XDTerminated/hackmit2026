@@ -2,7 +2,8 @@
 // one WebSocket for live state. The device is the source of truth: this file never
 // decides anything, it only asks and listens.
 
-export const DEFAULT_HOST = '10.189.88.178:8000';
+// The UNO Q on the HackMIT network. It changes with the network: set it in Settings on the phone.
+export const DEFAULT_HOST = '10.189.75.80:8000';
 
 export type DeviceState = 'still' | 'walking' | 'freeze_detected';
 

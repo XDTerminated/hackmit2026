@@ -36,7 +36,7 @@ updated object.
 | `walking_gate` | bool | `true` | | only start a cue if the wearer was walking in the last 5 s. Off: can catch freezes when starting to walk, but will also beep while standing or sitting |
 | `cue_sound` | bool | `true` | | play an audible metronome at all |
 | `cue_output` | string | `"buzzer"` | `"buzzer"`, `"phone"` | where the audible metronome plays. Only one at a time: two metronomes on two clocks drift apart, and an unsteady beat is worse than none |
-| `cue_vibration` | bool | `false` | | vibration motor pulses on the same beat |
+| `cue_vibration` | bool | `false` | | a pulse on the same beat: the phone vibrates when `cue_output` is `"phone"`, otherwise the device's vibration motor (not fitted on the prototype) |
 | `tempo_bpm` | int | `100` | 60 to 140 | metronome rate. Should be set to the wearer's comfortable stepping rate, ideally with their physio. Fast rates can make gait worse |
 | `volume` | int | `70` | 0 to 100 | buzzer loudness |
 | `cue_min_seconds` | int | `5` | 3 to 15 | a cue plays at least this long, and keeps going while the freeze continues |

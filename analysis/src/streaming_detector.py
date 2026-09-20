@@ -21,8 +21,17 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
-from scipy import fft as sp_fft
+
+# pandas and scipy are only needed for --verify / --export on a laptop. The detector itself runs
+# on the UNO Q, where neither may be installed.
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
+try:
+    from scipy import fft as sp_fft
+except ImportError:
+    sp_fft = np.fft
 
 ROOT = Path(__file__).resolve().parents[2]  # repo root
 CLEAN_DIR = ROOT / "data" / "daphnet" / "clean"

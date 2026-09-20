@@ -2,7 +2,7 @@
 //
 // Reads the MPU at a steady 64 Hz and pushes every sample to the Python side with
 // Bridge.notify("imu_sample", t_us, ax_mg, ay_mg, az_mg, gx_dps, gy_dps, gz_dps).
-// Python runs the detector and calls set_cue(true/false); this side turns that into a
+// Python runs the detector and sends set_cue(on, tempo_bpm); this side turns that into a
 // metronome beat on the LED and buzzer pin.
 //
 // Runs on the board (first verified 2026-09-19: 64.0 Hz, no lost samples, gravity reads 1047 mg).
@@ -40,8 +40,8 @@ const uint32_t SAMPLE_PERIOD_US = 15625;
 // Cue output. BUZZER_PIN HIGH sounds an active buzzer; a passive piezo needs a square wave
 // instead (tone(), if the core provides it). Set BUZZER_PIN to -1 to use the LED only.
 #define BUZZER_PIN        8
-const uint32_t BEAT_PERIOD_MS = 600;   // 100 beats per minute
-const uint32_t BEAT_ON_MS     = 80;
+const uint32_t BEAT_ON_MS = 80;
+volatile uint32_t beatPeriodMs = 600;   // 100 beats per minute until Python says otherwise
 
 uint32_t nextSampleUs;
 int chipId = -1;
@@ -97,16 +97,17 @@ void checkSensorAwake()
     if (pwr >= 0 && (pwr & MPU_PWR1_SLEEP)) initIMU();
 }
 
-// Called from Python when the detector starts or stops a cue.
-void set_cue(bool on)
+// Called from Python when a cue starts or stops. The tempo comes from the wearer's settings.
+void set_cue(bool on, int tempoBpm)
 {
+    if (tempoBpm >= 40 && tempoBpm <= 200) beatPeriodMs = 60000UL / (uint32_t)tempoBpm;
     if (on && !cueOn) cueStartMs = millis();
     cueOn = on;
 }
 
 void updateCueOutput()
 {
-    bool beat = cueOn && ((millis() - cueStartMs) % BEAT_PERIOD_MS) < BEAT_ON_MS;
+    bool beat = cueOn && ((millis() - cueStartMs) % beatPeriodMs) < BEAT_ON_MS;
     digitalWrite(LED_BUILTIN, beat ? HIGH : LOW);
     if (BUZZER_PIN >= 0) digitalWrite(BUZZER_PIN, beat ? HIGH : LOW);
 }

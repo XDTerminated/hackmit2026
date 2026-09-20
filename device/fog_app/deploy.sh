@@ -18,6 +18,10 @@ action="${1:-all}"
 if [ "$action" = all ] || [ "$action" = copy ]; then
     "$ADB" shell "mkdir -p $REMOTE"
     for item in app.yaml sketch python assets; do "$ADB" push "$APP_DIR/$item" "$REMOTE/" | tail -1; done
+    # The device API (what the phone app talks to) lives in analysis/src; ship it next to main.py.
+    for file in device_server.py streaming_detector.py; do
+        "$ADB" push "$APP_DIR/../../analysis/src/$file" "$REMOTE/python/" | tail -1
+    done
     "$ADB" shell "rm -rf $REMOTE/python/__pycache__"
 fi
 if [ "$action" = all ]; then
@@ -25,8 +29,10 @@ if [ "$action" = all ]; then
     "$ADB" shell "arduino-app-cli app restart user:fog_app"
     ip="$("$ADB" shell "ip -4 -o addr show wlan0 | awk '{print \$4}' | cut -d/ -f1" | tr -d '\r')"
     "$ADB" forward tcp:7000 tcp:7000 >/dev/null   # also reachable through the USB cable
+    "$ADB" forward tcp:8000 tcp:8000 >/dev/null
     echo; echo "Page: http://localhost:7000 on this laptop (through USB)"
-    echo "      http://${ip:-<board-ip>}:7000 from any device on the same Wi-Fi"; echo
+    echo "      http://${ip:-<board-ip>}:7000 from any device on the same Wi-Fi"
+    echo "Phone app: set the device address to ${ip:-<board-ip>} (API on port 8000)"; echo
 fi
 if [ "$action" = all ] || [ "$action" = logs ]; then
     "$ADB" shell "arduino-app-cli app logs user:fog_app" | tail -40

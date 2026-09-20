@@ -163,8 +163,20 @@ export function SettingsScreen({
             />
             <Row
               theme={theme}
+              title="Sound"
+              note="A click on every beat. Sound and vibration cannot both be off."
+              right={
+                <Switch
+                  value={settings.cue_sound}
+                  onValueChange={(on) => updateSettings({ cue_sound: on })}
+                  trackColor={{ true: theme.c.accent, false: theme.c.border }}
+                />
+              }
+            />
+            <Row
+              theme={theme}
               title="Vibration"
-              note="The motor pulses on the same beat."
+              note="A pulse on every beat: this phone when the cue plays here, otherwise the device's motor."
               right={
                 <Switch
                   value={settings.cue_vibration}

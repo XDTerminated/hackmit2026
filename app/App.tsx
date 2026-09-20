@@ -30,7 +30,10 @@ export default function App() {
 
   // Lives here, not in a screen: a cue must keep playing while the wearer is looking
   // at their history or their settings.
-  useMetronome(device.cue?.output === 'phone', device.cue?.tempoBpm ?? 100);
+  useMetronome(device.cue?.output === 'phone', device.cue?.tempoBpm ?? 100, {
+    sound: device.settings?.cue_sound ?? true,
+    vibration: device.settings?.cue_vibration ?? false,
+  });
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.c.bg }}>

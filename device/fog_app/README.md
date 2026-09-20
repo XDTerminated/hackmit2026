@@ -1,7 +1,16 @@
 # fog_app: live monitor over Wi-Fi
 
-An Arduino App Lab app for the UNO Q. The STM32 reads the IMU at 64 Hz, the Linux side runs the
-freeze detector and serves a web page, and any phone or laptop on the same Wi-Fi can open it.
+An Arduino App Lab app for the UNO Q. The STM32 reads the IMU at 64 Hz and the Linux side serves two things
+over Wi-Fi:
+
+- **port 8000, the device API** from `docs/api.md` (`analysis/src/device_server.py`, copied onto the board by
+  `deploy.sh`): detector, sensitivity presets and settings, SQLite event log, REST + WebSocket. The phone app
+  in `app/` talks to this, and it owns the cue: it tells the STM32 when to play the buzzer and at what tempo.
+- **port 7000, a diagnostics page** (`fog_core.py` + `assets/`): live charts, the sample-rate check and
+  labelled recording.
+
+If the device API cannot start on the board, the diagnostics detector drives the cue instead, so the board
+always works on its own.
 
 ```
 sketch/sketch.ino   STM32: IMU at 64 Hz -> Bridge.notify("imu_sample", ...); plays the cue on set_cue()

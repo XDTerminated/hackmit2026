@@ -1,0 +1,2 @@
+# WebSocket support for the device API's live channel (uvicorn needs it; no-op if already present).
+websockets

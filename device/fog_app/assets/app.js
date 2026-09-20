@@ -98,6 +98,8 @@ function renderStatus(data) {
   setTile("t-lost", st.lost_samples.toLocaleString(), `of ${(st.samples + st.lost_samples).toLocaleString()} (${(100 * lostShare).toFixed(2)}%)`,
           st.samples ? (lostShare < 0.001 ? "ok" : "bad") : "");
 
+  // With the device API running, the phone app's sensitivity preset decides the cue, not this switch.
+  document.querySelector(".card.response").hidden = st.cue_owner === "device_api";
   for (const button of document.querySelectorAll("#response button")) {
     button.setAttribute("aria-pressed", String(button.dataset.response === st.response));
   }

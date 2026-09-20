@@ -38,8 +38,15 @@ from `docs/api.md`, with a `SampleSource` seam; so far it has only run on CSV re
 event, false alarm vs false cue); ADR 0001 and 0002 record detection-on-device and Python-not-C for the prototype.
 Branch `board-integration` merges that work with the board app.
 
-Not done: `device_server.py` fed from the Bridge on the board; phone vibration cue; the app rendered on a real
-phone; the C port.
+On `board-integration`: `device_server.py` has a `LiveSource` (samples pushed from another thread, awaited without
+blocking the API), a cue hook that drives the buzzer with the wearer's tempo, `start_on_board()`, and an optional
+debug route; pandas/scipy are optional imports so the board does not need them. `device/fog_app/python/main.py`
+feeds both the device API (port 8000, owns the cue) and the diagnostics page (port 7000), falling back to the page's
+detector if the API cannot start. `deploy.sh` ships `device_server.py` + `streaming_detector.py` to the board. The
+phone cue now has vibration (Android `Vibration`, iOS haptic tap) and a Sound toggle. All tested on a laptop with a
+fake sensor thread (API answers in 3 ms while live).
+
+Not done: that integration deployed and run on the board; the app on a real phone; the C port.
 
 ## The detector (v2, recency-weighted; port this)
 
@@ -189,9 +196,10 @@ CMSIS-DSP `arm_rfft_fast_f32` uses the same unnormalised FFT convention as NumPy
 
 ## Next steps
 
-1. Run `device_server.py` on the UNO Q inside the App Lab app, fed by a Bridge `SampleSource` (the sketch in
-   `device/fog_app/` already delivers 64 Hz over the Bridge), so the phone app talks to the real device.
-2. Run `app/` on a real phone (Expo Go) against it and fix what rendering reveals; add the phone vibration cue.
+1. Plug the board in and run `bash device/fog_app/deploy.sh`: first run of the device API on the board. Check the
+   logs say it is on port 8000 (needs the `websockets` package from `python/requirements.txt`, so the board needs
+   internet on that first start) and that `http://<board>:8000/api/v1/status` answers.
+2. Run `app/` on a real phone (Expo Go) against the board; check the click, the vibration and the STOP button.
 3. Wear it: confirm band power is bimodal (still tens of mg^2, walking >10^4), try simulated freezes, record
    labelled sessions from the port-7000 page, run `check_recording.py`.
 4. Own recordings, then re-tune the amplitude thresholds -- on new recordings, never the ones reported from.

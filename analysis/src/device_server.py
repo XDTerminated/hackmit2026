@@ -6,6 +6,10 @@ only thing that changes on the UNO Q is where samples come from: a SampleSource 
 instead of a CSV. Everything downstream -- detector, cue state machine, event log, REST, the
 live WebSocket -- is the code that ships.
 
+On the board it is started by device/fog_app/python/main.py through start_on_board(), which
+feeds it from the Bridge (LiveSource), drives the buzzer through a cue hook, and leaves the
+debug route out. FOG_DB sets where the event log lives.
+
 `POST /debug/freeze` is the one route that is replay-only and must never exist on the board.
 
     uv run src/device_server.py                         replay test_vectors/walk_then_freeze
@@ -22,16 +26,19 @@ import argparse
 import asyncio
 import contextlib
 import json
+import os
+import queue
 import random
 import sqlite3
 import sys
+import threading
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 import numpy as np
-import pandas as pd
 import uvicorn
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,7 +49,7 @@ from streaming_detector import DetectorParams, StreamingDetector  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 VECTOR_DIR = ROOT / "test_vectors"
 CLEAN_DIR = ROOT / "data" / "daphnet" / "clean"
-DB_PATH = ROOT / "analysis" / "device.sqlite3"
+DB_PATH = Path(os.environ.get("FOG_DB", ROOT / "analysis" / "device.sqlite3"))
 
 FIRMWARE = "0.1.0"
 SAMPLE_RATE_HZ = 64
@@ -97,6 +104,7 @@ class SampleSource:
     """Yields (ax_mg, ay_mg, az_mg) forever. On the UNO Q this reads the Bridge instead."""
 
     name = "none"
+    live = False   # True: samples arrive in real time from another thread, see LiveSource
 
     def samples(self) -> Iterator[tuple[float, float, float]]:
         raise NotImplementedError
@@ -106,6 +114,8 @@ class CsvReplaySource(SampleSource):
     """Loops a CSV of milli-g samples. Test vectors are real Daphnet data with known cues."""
 
     def __init__(self, path: Path, cols=("ax_mg", "ay_mg", "az_mg")):
+        import pandas as pd   # replay only; not needed on the board
+
         frame = pd.read_csv(path)
         missing = [c for c in cols if c not in frame.columns]
         if missing:
@@ -117,6 +127,48 @@ class CsvReplaySource(SampleSource):
         while True:
             for row in self.rows:
                 yield float(row[0]), float(row[1]), float(row[2])
+
+
+class LiveSource(SampleSource):
+    """Samples pushed in from another thread: on the UNO Q, the Bridge callback for the STM32.
+
+    push() never blocks the producer; if the server falls behind, the oldest samples are dropped.
+    """
+
+    name = "bridge"
+    live = True
+
+    def __init__(self):
+        self.queue: queue.Queue = queue.Queue(maxsize=SAMPLE_RATE_HZ * 10)
+        self.rate_hz = float(SAMPLE_RATE_HZ)
+        self._last_t_us: int | None = None
+        self._device_time_us = 0
+        self._recent: deque = deque(maxlen=SAMPLE_RATE_HZ * 10 + 1)
+
+    def push(self, t_us: int, ax_mg: float, ay_mg: float, az_mg: float) -> None:
+        t_us = int(t_us)
+        if self._last_t_us is not None:
+            self._device_time_us += (t_us - self._last_t_us) % 2**32   # micros() wraps every ~71 min
+            self._recent.append(self._device_time_us)
+            if len(self._recent) > SAMPLE_RATE_HZ:
+                span = self._recent[-1] - self._recent[0]
+                if span:
+                    self.rate_hz = (len(self._recent) - 1) * 1_000_000 / span
+        self._last_t_us = t_us
+        if self.queue.full():
+            with contextlib.suppress(queue.Empty):
+                self.queue.get_nowait()
+        self.queue.put_nowait((float(ax_mg), float(ay_mg), float(az_mg)))
+
+    def take(self, n: int, timeout_s: float) -> list | None:
+        """Block until n samples are available. None if the sensor goes quiet for timeout_s."""
+        block = []
+        try:
+            while len(block) < n:
+                block.append(self.queue.get(timeout=timeout_s))
+        except queue.Empty:
+            return None
+        return block
 
 
 def build_source(args) -> SampleSource:
@@ -221,6 +273,15 @@ class Device:
     open_event: OpenEvent | None = None
     manual_until: datetime | None = None
     clients: set[WebSocket] = field(default_factory=set)
+    sensor_ok: bool = True
+    # Called with (on, tempo_bpm) when the device's own buzzer should start or stop.
+    cue_hook: Callable[[bool, int], None] | None = None
+
+    def drive_buzzer(self, on: bool, output: str = "buzzer") -> None:
+        if self.cue_hook is None:
+            return
+        with contextlib.suppress(Exception):   # a hardware hiccup must never break the event log
+            self.cue_hook(on and output == "buzzer", int(self.settings["tempo_bpm"]))
 
     # -- time -------------------------------------------------------------
     def now(self) -> datetime:
@@ -255,7 +316,7 @@ class Device:
     def status(self) -> dict:
         return {
             "device_time": iso(self.now()),
-            "sensor_ok": True,
+            "sensor_ok": self.sensor_ok,
             "sample_rate_hz": round(self.measured_rate_hz, 2),
             "state": self.state,
             "cue_active": self.cue_active,
@@ -299,6 +360,7 @@ class Device:
         self.cue_active = True
         self.open_event = OpenEvent(id=cursor.lastrowid, started=self.now(),
                                     peak_fi=freeze_index, trigger=trigger)
+        self.drive_buzzer(True, output)
         await self.broadcast(
             "cue_started",
             {
@@ -323,6 +385,7 @@ class Device:
         self.cue_active = False
         self.manual_until = None
         event.watching_resume = True
+        self.drive_buzzer(False)
         await self.broadcast("cue_stopped", {"event_id": event.id, "reason": reason})
         # The event stays open for up to 15 s so walking_resumed_s can be filled in.
         asyncio.create_task(self.finalise_event(event))
@@ -347,7 +410,7 @@ class Device:
         sensitivity = self.settings["sensitivity"]
         gate = self.settings["walking_gate"]
         hold = self.settings["cue_min_seconds"]
-        stream = self.source.samples()
+        stream = None if self.source.live else self.source.samples()
         period = (STEP / SAMPLE_RATE_HZ) / self.speed
         pending_resume: list[OpenEvent] = []
 
@@ -363,9 +426,20 @@ class Device:
                 gate = self.settings["walking_gate"]
                 hold = self.settings["cue_min_seconds"]
 
+            if self.source.live:
+                # Wait for the sensor in a worker thread so REST and the WebSocket stay responsive.
+                block = await asyncio.get_event_loop().run_in_executor(None, self.source.take, STEP, 2.0)
+                if (block is not None) != self.sensor_ok:
+                    self.sensor_ok = block is not None
+                    await self.broadcast("status", self.status())
+                if block is None:
+                    continue
+                self.measured_rate_hz = self.source.rate_hz
+            else:
+                block = [next(stream) for _ in range(STEP)]
+
             frame = None
-            for _ in range(STEP):
-                ax, ay, az = next(stream)
+            for ax, ay, az in block:
                 got = detector.push(ax, ay, az)
                 if got is not None:
                     frame = got
@@ -373,8 +447,9 @@ class Device:
             if frame is not None:
                 await self.on_frame(frame, pending_resume)
 
-            elapsed = asyncio.get_event_loop().time() - tick
-            await asyncio.sleep(max(0.0, period - elapsed))
+            if not self.source.live:   # a live sensor paces the loop by itself
+                elapsed = asyncio.get_event_loop().time() - tick
+                await asyncio.sleep(max(0.0, period - elapsed))
 
     async def on_frame(self, frame, pending_resume) -> None:
         walking = frame.loco_power > DetectorParams().walk_loco_power
@@ -446,7 +521,7 @@ def seed_history(db, days: int, settings: dict) -> None:
 # --------------------------------------------------------------------------- app
 
 
-def create_app(device: Device) -> FastAPI:
+def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
     app = FastAPI(title="FoG device API", version=FIRMWARE)
     app.add_middleware(
         CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
@@ -544,9 +619,12 @@ def create_app(device: Device) -> FastAPI:
             {"event_id": None, "output": device.settings["cue_output"],
              "tempo_bpm": device.settings["tempo_bpm"], "trigger": "test"},
         )
+        device.drive_buzzer(True, device.settings["cue_output"])
 
         async def end():
             await asyncio.sleep(2)
+            if not device.cue_active:   # a real cue that started meanwhile keeps the buzzer
+                device.drive_buzzer(False)
             await device.broadcast("cue_stopped", {"event_id": None, "reason": "finished"})
 
         asyncio.create_task(end())
@@ -644,7 +722,6 @@ def create_app(device: Device) -> FastAPI:
         }
 
     # -- replay only ------------------------------------------------------
-    @app.post(api + "/debug/freeze")
     async def debug_freeze():
         """Replay-only. Must never exist on the board: it would show a cue the detector
         never produced, and nobody watching could tell the difference."""
@@ -657,6 +734,9 @@ def create_app(device: Device) -> FastAPI:
 
         asyncio.create_task(end())
         return {"forced": True}
+
+    if debug_routes:
+        app.post(api + "/debug/freeze")(debug_freeze)
 
     # -- live channel -----------------------------------------------------
     @app.websocket(api + "/live")
@@ -680,6 +760,19 @@ def create_app(device: Device) -> FastAPI:
             device.clients.discard(socket)
 
     return app
+
+
+def start_on_board(cue_hook: Callable[[bool, int], None] | None = None, port: int = 8000) -> LiveSource:
+    """Run the server in a background thread, fed by the returned LiveSource. No debug route."""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    db = connect_db()
+    settings = load_settings(db)
+    save_settings(db, settings)
+    source = LiveSource()
+    device = Device(db=db, source=source, settings=settings, cue_hook=cue_hook)
+    config = uvicorn.Config(create_app(device, debug_routes=False), host="0.0.0.0", port=port, log_level="warning")
+    threading.Thread(target=uvicorn.Server(config).run, daemon=True, name="device-server").start()
+    return source
 
 
 def main() -> None:

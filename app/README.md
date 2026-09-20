@@ -24,6 +24,14 @@ npm start                                           # scan the QR with Expo Go
 Both machines must be on the same network. The default device address is baked into
 `src/api.ts` (`DEFAULT_HOST`); change it in Settings on the phone, or edit that constant.
 
+### Against the real device
+
+The UNO Q runs the same server (`device/fog_app`, deployed with `bash device/fog_app/deploy.sh`), fed by
+the IMU instead of a CSV, on port 8000. Put the phone on the same Wi-Fi as the board and set the device
+address in Settings to `<board-ip>:8000`; the deploy script prints it. Event Wi-Fi often blocks
+device-to-device traffic: if the app cannot connect, put the phone and the board on a phone hotspot.
+`/debug/freeze` does not exist there; walk, stop and tremble the leg instead.
+
 For a demo where you cannot wait for a real freeze:
 
 ```bash
@@ -56,6 +64,9 @@ src/screens/           Now, History, Settings
 ## Decisions worth knowing
 
 - **No push notifications on a freeze.** The cue is the notification.
+- **The phone cue is a click, a vibration pulse, or both** (Settings: Sound, Vibration), on the same beat.
+  Android uses a 70 ms vibration; iOS ignores vibration durations (always ~0.4 s, which smears into the
+  next beat), so it gets a single heavy haptic tap per beat instead. Expo Go is enough for both.
 - **One audible cue source at a time.** Two metronomes on two clocks drift apart, and an unsteady
   beat is worse than none. `cue_output` picks buzzer or phone; the device falls back to the buzzer
   if no app is connected.
