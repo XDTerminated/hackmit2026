@@ -49,7 +49,8 @@ _Avoid_: threshold, sensitivity level, mode
 
 **Cue**:
 The steady beat played to help the wearer start walking again. A cue is an aid offered to the
-wearer, never a warning about their condition.
+wearer, never a warning about their condition. In the app, where the wearer reads it, a cue is called
+**the beat** ("Play a beat now", "Step to the beat"); "cue" stays the word in code and documents.
 _Avoid_: alarm, alert, notification, warning
 
 **Event**:

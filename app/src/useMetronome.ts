@@ -29,12 +29,14 @@ function pulse() {
   }
 }
 
-export function useMetronome(active: boolean, bpm: number, channels: CueChannels) {
+export function useMetronome(active: boolean, bpm: number, channels: CueChannels, onBeat?: () => void) {
   const player = useAudioPlayer(CLICK);
   const playerRef = useRef(player);
   playerRef.current = player;
   const channelsRef = useRef(channels);
   channelsRef.current = channels;
+  const onBeatRef = useRef(onBeat); // the beat on screen, in step with the click and the pulse
+  onBeatRef.current = onBeat;
 
   // iOS silences everything when the ring switch is off, which would make the cue
   // useless in exactly the situation it exists for.
@@ -61,6 +63,7 @@ export function useMetronome(active: boolean, bpm: number, channels: CueChannels
           .catch(() => {});
       }
       if (channelsRef.current.vibration) pulse();
+      onBeatRef.current?.();
     };
 
     // Each beat is scheduled against the clock, not against the previous timer. setInterval

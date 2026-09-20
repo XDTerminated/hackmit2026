@@ -37,8 +37,8 @@ const SILENCE_LIMIT_MS = 12_000;
 const normaliseHost = (text: string) =>
   text.trim().replace(/^[a-z]+:\/\//i, '').replace(/\/.*$/, '');
 
-export function useDevice() {
-  const [host, setHost] = useState(DEFAULT_HOST);
+export function useDevice(initialHost: string | null = null) {
+  const [host, setHost] = useState(initialHost ?? DEFAULT_HOST);
   const [connection, setConnection] = useState<Connection>('connecting');
   const [status, setStatus] = useState<Status | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -46,6 +46,9 @@ export function useDevice() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [cue, setCue] = useState<Cue | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The automatic cue the wearer last stopped, which STOP marked a false alarm. Kept until they answer or
+  // the next cue starts, with no countdown: nothing here has to be done against the clock.
+  const [stoppedEventId, setStoppedEventId] = useState<number | null>(null);
 
   const client = useMemo(() => new DeviceClient(host), [host]);
 
@@ -118,6 +121,7 @@ export function useDevice() {
     setEvents([]);
     setSummary(null);
     setCue(null);
+    setStoppedEventId(null);
 
     // The link is gone: by a close, or by silence. Only ever for the socket that is current.
     const lost = (ws: WebSocket) => {
@@ -159,6 +163,7 @@ export function useDevice() {
         } else if (message.type === 'cue_started') {
           // "Test the cue" pressed during a real cue must not replace it, nor end it 2 s later.
           setCue((current) => (current && current.trigger !== 'test' && message.trigger === 'test' ? current : toCue(message)));
+          if (message.trigger !== 'test') setStoppedEventId(null);
         } else if (message.type === 'cue_stopped') {
           setCue((current) => (current && current.eventId === message.event_id ? null : current));
         } else if (message.type === 'event_created') {
@@ -238,6 +243,7 @@ export function useDevice() {
       const result = await attempt(() => client.stopCue(feedback));
       if (!result?.stopped) return null;
       refreshHistory().catch(() => {});
+      if (feedback === 'false_alarm') setStoppedEventId(result.event_id);
       return result.event_id;
     },
     [client, attempt, refreshHistory],
@@ -262,6 +268,12 @@ export function useDevice() {
     },
     [client, attempt],
   );
+
+  // "No, I really was stuck": take back the false-alarm mark STOP put on the event.
+  const confirmRealFreeze = useCallback(async () => {
+    if (stoppedEventId != null && (await setFeedback(stoppedEventId, 'real'))) setStoppedEventId(null);
+  }, [stoppedEventId, setFeedback]);
+  const dismissStopped = useCallback(() => setStoppedEventId(null), []);
 
   const act = useCallback(
     async (action: () => Promise<Status>) => {
@@ -297,6 +309,9 @@ export function useDevice() {
     cue,
     error,
     stopCue,
+    stoppedEventId,
+    confirmRealFreeze,
+    dismissStopped,
     setFeedback,
     updateSettings,
     startBeat,

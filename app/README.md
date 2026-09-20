@@ -50,22 +50,37 @@ src/useDevice.ts       the device link: live WebSocket, a REST sync on every con
                        every action (failures are shown under the banner on all tabs)
 src/theme.ts           colours; nothing in the palette shouts
 src/components/ui.tsx  cards, buttons, banner, and the stacked bar chart (react-native-svg)
-src/screens/           Now, History, Settings
+src/screens/           Home, History (the "My data" tab), Settings
+src/usePreferences.ts  what the phone remembers: the look of the app, the device address
 ```
 
 ## The three screens
 
-- **On every tab**: the connection banner, and the last error in plain words.
-- **Now**: what the device is doing, and when a cue plays, one large STOP. Stopping an
-  automatic cue also marks the event a false alarm, with a 20 s undo; a beat the wearer asked for is just
-  stopped. Also says so when the sensor has gone quiet or detection is off, shows the wearer's measured
-  walking pace, and offers a wearer-triggered beat.
-- **History**: cues today against yesterday, a 14-day stacked bar chart, and the share of cues
-  followed by walking resuming — the only number that argues the device works. Tap a bar for that
-  day's cues; tap a cue to mark it a false alarm.
-- **Settings**: device address, sensitivity presets with their measured trade-offs, cue output, "Match my
-  walking pace" (auto tempo, with the manual tempo as its fallback), sound and vibration, a 2 s cue test, the
-  walking gate, and pause.
+Designed for the wearer, who is likely to be older and to have a tremor and slowed movement, following the
+guidelines Nunes et al. (2015) derived from tests with 39 people with Parkinson's: tap targets of 14 mm a side
+(`TARGET` in `src/theme.ts`, 88 points), taps instead of drags (the speed control is two buttons, not a slider),
+high contrast, little on a screen, nothing that must be done against the clock, more than one channel for
+anything that matters; and, as in the Dexcom app, one status that can be read at arm's length, with the data a
+tab away. The app says "beat" to the wearer; "cue" is the project's word (`CONTEXT.md`).
+
+- **On every tab**: a banner only when something is wrong (not connected, connecting), and the last error in
+  plain words. A cue takes the screen over: whatever tab is open, the app goes to Home.
+- **Home**: one picture, one word, one sentence ("Ready", "Paused", "Not connected", "Sensor problem", "Switched
+  off"), and "Play a beat now". No numbers. While a cue plays: a circle that pulses with the click and the
+  vibration, "Step to the beat", and one enormous STOP. Stopping an automatic cue marks the event a false alarm;
+  a card then asks "Was that right?" and stays, with no countdown, until answered or until the next cue.
+- **My data**: beats today against yesterday, a 14-day stacked bar chart, the share of beats followed by walking
+  again (the only number that argues the device works), and the measured walking pace. Tap a bar for that day's
+  beats; each can be marked a false alarm.
+- **Settings**: what a wearer changes first: the beat (sound, vibration, "Match my walking pace", the fallback
+  speed, "Try the beat"), how the app looks, taking a break. Folded away under **Advanced setup**, for whoever
+  sets the device up: the device address, sensitivity, the walking gate, and whether the phone plays the beat.
+
+Light and dark: **Automatic** (the default) follows the clock, not the phone's setting: light from 7:00 to 19:00,
+dark otherwise, because a bright screen in a dim room is unwelcome. Light and Dark pin it. The choice and the last
+device address that worked are the only things the phone stores (`src/usePreferences.ts`, AsyncStorage).
+
+For development, `EXPO_PUBLIC_DEVICE_HOST=192.168.137.50:8000` in `app/.env` replaces the default address.
 
 ## Decisions worth knowing
 
@@ -75,7 +90,7 @@ src/screens/           Now, History, Settings
   next beat), so it gets a single heavy haptic tap per beat instead. Expo Go is enough for both.
 - **The phone is the cue.** `cue_output` defaults to `phone`, so the device needs no buzzer. The price: the
   app must be open on screen. It keeps the screen awake for that reason (`expo-keep-awake`), and says so on the
-  Now screen. A locked or backgrounded phone plays nothing; see "The limit of a phone cue" in `docs/api.md`.
+  Home screen. A locked or backgrounded phone plays nothing; see "The limit of a phone cue" in `docs/api.md`.
 - **One audible cue source at a time.** Two metronomes on two clocks drift apart, and an unsteady
   beat is worse than none. `cue_output` picks buzzer or phone; the device falls back to the buzzer
   if no app is connected.

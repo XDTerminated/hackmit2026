@@ -52,8 +52,13 @@ isolation, confirmed on the Hyatt network); with no phone data to spare, the lap
 (laptop hotspot, then phone hotspots; hotel Wi-Fi disabled); see `device/fog_app/README.md`.
 
 **App (runs on a phone in Expo Go against the board; the team reports it works, auto tempo not yet tried worn).**
-Expo SDK 57, screens Now,
-History and Settings, in `app/`. `src/useDevice.ts` owns the link: one WebSocket, a full REST sync on every
+Expo SDK 57, tabs Home, My data and Settings, in `app/`, redesigned 2026-09-20 for older wearers with a tremor
+(Nunes et al. 2015: 14 mm targets, taps not drags, nothing timed, little per screen; Dexcom-style single status):
+Home shows one status and one button and no numbers, a cue takes the screen over with a beat that pulses with
+the click and one large STOP, the STOP verdict card has no countdown, setup lives under Settings > Advanced.
+Light/dark is Automatic by time of day (7-19 h light) or pinned; that choice and the last working device address
+are stored on the phone (`usePreferences.ts`). Checked by screenshots of a web build against a replayed
+recording, both themes; not yet on a phone. `src/useDevice.ts` owns the link: one WebSocket, a full REST sync on every
 connect, reconnection, and every action through one error path shown on all tabs. The phone cue is a click
 and/or a vibration pulse on a drift-corrected beat. `CONTEXT.md` is the glossary; ADR 0001/0002 record
 detection-on-device and Python-not-C for the prototype.
@@ -78,12 +83,9 @@ WebSocket are not subject to CORS); the wildcard CORS rule exists only in laptop
 
 Open decisions from the code review, not yet made: day boundaries are UTC on the server but times are shown
 locally (cues after 8 pm Boston time count as tomorrow); "cues today" is all events on Now but excludes false
-alarms on History; the device address is not remembered between launches (needs a storage dependency);
-`app.json` forces light mode although a dark palette exists, and white-on-accent text in that dark palette is
-about 2.2:1; settings switches wait for the device's answer instead of updating optimistically; sensitivity is
-three switches rather than a radio list; the History chart's bars are narrow tap targets with no screen-reader
+alarms on History; settings switches wait for the device's answer instead of updating optimistically; the History chart's bars are narrow tap targets with no screen-reader
 alternative. From the second review, also open: the History toggle turns a `real` verdict into `null`
-after two taps; the STOP undo is lost on a tab switch; a dev or store build would need cleartext-HTTP and iOS
+after two taps; a dev or store build would need cleartext-HTTP and iOS
 local-network permissions in `app.json` (Expo Go does not); the diagnostics page (port 7000) always runs the
 balanced preset, so it can disagree with the real cue; `LED_BUILTIN` polarity is unchecked; `fewer_alerts` caught
 only 10/12 of our own simulated freezes.

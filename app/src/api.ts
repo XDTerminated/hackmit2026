@@ -5,7 +5,9 @@
 // The UNO Q announces itself as arduino.local (mDNS), which stays the same when the network
 // changes; its IP address does not. If the name does not resolve on a phone or network, type the
 // IP address in Settings instead (deploy.sh prints it).
-export const DEFAULT_HOST = 'arduino.local:8000';
+// EXPO_PUBLIC_DEVICE_HOST (in app/.env, read by Expo at start) replaces it for development, for example
+// with the board's address on the laptop hotspot or a replay server on this machine.
+export const DEFAULT_HOST = process.env.EXPO_PUBLIC_DEVICE_HOST ?? 'arduino.local:8000';
 
 type DeviceState = 'still' | 'walking' | 'freeze_detected';
 
