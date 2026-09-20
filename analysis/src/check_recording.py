@@ -66,13 +66,16 @@ def main():
     # micros() wraps every ~71 minutes; unwrap before differencing.
     t = np.unwrap(df["t_us"].to_numpy(), period=2**32)
     dt = np.diff(t)
-    rate = 1e6 / np.median(dt)
-    lost = int(np.round(dt[dt > 1.5 * PERIOD_US] / PERIOD_US - 1).sum())
+    gaps = dt > 1.5 * PERIOD_US
+    # Mean, not median: the board's scheduler ticks in ~1 ms steps, so intervals alternate between
+    # ~14.9 and ~15.9 ms and average out to 64 Hz. The median of that is 15.9 ms, which reads as 62.9 Hz.
+    rate = 1e6 / dt[~gaps].mean()
+    lost = int(np.round(dt[gaps] / PERIOD_US - 1).sum())
     jitter_ok = np.mean(np.abs(dt - PERIOD_US) < 1000)
-    print(f"  duration {(t[-1] - t[0]) / 1e6:.1f} s, median interval {np.median(dt):.0f} us = {rate:.2f} Hz")
+    print(f"  duration {(t[-1] - t[0]) / 1e6:.1f} s, mean interval {dt[~gaps].mean():.0f} us = {rate:.2f} Hz")
     verdict(abs(rate - 64) < 0.2, f"sample rate is {rate:.2f} Hz (detector bands assume 64.00)")
     verdict(jitter_ok > 0.99, f"{100 * jitter_ok:.1f}% of intervals within 1 ms of {PERIOD_US:.0f} us")
-    verdict(lost == 0, f"{lost} samples lost in {int((dt > 1.5 * PERIOD_US).sum())} gaps"
+    verdict(lost == 0, f"{lost} samples lost in {int(gaps.sum())} gaps"
                        + ("" if lost == 0 else " -> the Bridge is not keeping up; send several samples per notify"))
 
     print("\n2. Scale")
