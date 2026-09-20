@@ -181,6 +181,20 @@ Caveats: two people, acted freezes, sensor placement unknown, unpaced sampling (
 Worth copying as an idea: their live keyboard annotation (W/S/F) while recording; a 3-way label gives the
 "standing" class that Daphnet lacks.
 
+### Own recordings (`data/own/raw/`, protocol in `docs/recording-protocol.md`, scored by `evaluate_own.py`)
+
+First worn session, 2026-09-20 (`khai_2nd`, 4 min, healthy volunteer, 6 simulated freezes of ~10 s, labels
+pressed live): 64.00 Hz, no lost samples, gravity 1028 mg, peak 6.3 g (so +-8 g was needed). Band power is
+bimodal as predicted: standing 9 mg^2, walking 104,000 mg^2, simulated freeze ~8,300 mg^2. Detector unchanged:
+balanced caught 6/6, latency median 1.1 s (0.7-3.8 s), 1 false cue; catch_more 6/6, 0.6 s (0.2-3.3 s), 2 false cues.
+- Latency tracks how strong the tremble is relative to the walking before it: a vigorous tremble (330,000 mg^2)
+  flips the index in one frame, a gentle one (~6,000 after walking at 80,000) waits ~2.5-4 s for the walking
+  to fade from the window.
+- Every false cue so far is the same thing: a normal stop. As walking power decays out of the window, a frame
+  or two sit at a few hundred mg^2 (above the 178 threshold) with the index above 1. Real and simulated
+  freezes hold thousands of mg^2, so a higher power threshold would remove it; do not change it on one
+  recording from one person. Re-check with more people, and tune on all but one held-out person.
+
 ## Conventions
 
 - Evaluate by subject (leave-one-subject-out or GroupKFold), never by window. Report sensitivity,

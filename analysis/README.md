@@ -19,6 +19,7 @@ Scripts find `data/` and `test_vectors/` relative to the repo root, so they work
 | `baseline_fi.py` | Freeze Index detector, leave-one-subject-out evaluation, window-length comparison. `--dataset daphnet\|mendeley` |
 | `simulate_device.py` | the on-device cue logic (debounce, walking gate, hold) on top of the detector. `--ramp 1` uses the current recency-weighted window (default 0 reproduces the original results). `--nested 0.9` checks the logic was not overfit; `--dataset mendeley --fixed-thresholds 1.056 178` runs the frozen detector on data it has never seen |
 | `streaming_detector.py` | sample-at-a-time reference for the STM32 port. `--verify` checks it against the batch code, `--export` writes `../test_vectors/` |
+| `evaluate_own.py` | scores the detector on our own labelled recordings in `data/own/raw/`, bout by bout: freezes caught, latency, false cues, per preset |
 | `check_recording.py` | validates a recording made from the board's diagnostics page (`device/fog_app`, port 7000): sample rate, lost samples, gravity scale, clipping, still-vs-walking band power, and what the frozen detector does on it |
 | `latency_experiment.py` | why the cue lagged 2-4 s after an abrupt freeze and what fixes it: window lengths and recency weighting, scored on latency and false alarms. Led to the weighted window now in the detector |
 | `gyro_experiment.py` | what the gyroscope adds (turn veto, gyro-based freeze index), on the Mendeley data |
