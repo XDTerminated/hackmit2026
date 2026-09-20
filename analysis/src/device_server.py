@@ -523,9 +523,14 @@ def seed_history(db, days: int, settings: dict) -> None:
 
 def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
     app = FastAPI(title="FoG device API", version=FIRMWARE)
-    app.add_middleware(
-        CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
-    )
+    if debug_routes:
+        # Laptop replay only: lets the Expo app run in a browser against this server. On the board
+        # the API has no authentication (docs/api.md), so browsers get no cross-origin access:
+        # otherwise any web page open on the same network could change settings or pause detection.
+        # The native app is not a browser and needs no CORS.
+        app.add_middleware(
+            CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+        )
     api = "/api/v1"
 
     @app.on_event("startup")
