@@ -43,11 +43,13 @@ detector is the project's reference implementation, checked against the firmware
 
 Verified on the board (2026-09-19): the sketch compiles and flashes, samples arrive over the Bridge at
 64.0 Hz with none lost, gravity reads 1047 mg (the patient datasets read 1030-1080), a board lying still
-reads 1 mg² of band power, and the page and API are served on port 7000. The sensor reports WHO_AM_I 0x68,
+reads 1 mg² of band power, the diagnostics page is served on port 7000 and the device API on port 8000. The sensor reports WHO_AM_I 0x68,
 so the GY-9250 breakout carries an MPU6050/9150-class chip.
 
-**Not yet tested: worn on a leg.** Walking power levels, simulated freezes, the cue output on a real
-buzzer, and recording to `/app/data` on the board.
+Worn on a leg by two volunteers (2026-09-20): walking power ~10^5 mg², standing ~9 mg², 12/12 simulated freezes
+cued, recording to `/app/data` works (see CLAUDE.md, "Own recordings"). **Not yet tested:** a real buzzer on
+`BUZZER_PIN` (none is fitted; the phone is the cue), and whether `LED_BUILTIN` is lit by HIGH or by LOW on this
+board (Arduino's UNO Q blink example says LOW; the sketch writes HIGH on the beat).
 
 ## Try it on a laptop first
 
@@ -70,11 +72,14 @@ root on your laptop, with the board's address in place of `BOARD` (find it in Ap
 board with `ip addr show` under `wlan0`):
 
 ```
-ssh arduino@BOARD "mkdir -p ~/ArduinoApps/fog_app"
-scp -r device/fog_app/app.yaml device/fog_app/sketch device/fog_app/python device/fog_app/assets arduino@BOARD:~/ArduinoApps/fog_app/
-ssh arduino@BOARD "arduino-app-cli app start ~/ArduinoApps/fog_app"
-ssh arduino@BOARD "arduino-app-cli app logs ~/ArduinoApps/fog_app"
+bash device/fog_app/deploy.sh          # over USB: copy, restart, forward ports 7000 and 8000, show the log
+bash device/fog_app/deploy.sh logs     # just the log
 ```
+
+The script also copies `device_server.py`, `streaming_detector.py`, `cadence.py` and `demo_page.html` from
+`analysis/src/` into the app's `python/` folder; without them the app cannot start. Without USB, the same
+files can be copied by hand into `~/ArduinoApps/fog_app/` with `scp`, then
+`ssh arduino@BOARD "arduino-app-cli app stop user:fog_app; arduino-app-cli app start user:fog_app"`.
 
 The first start is slow: it compiles the sketch, flashes the STM32 and prepares the Python
 environment. Stop whatever other app is running first (`arduino-app-cli app stop <path>`). The app

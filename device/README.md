@@ -7,7 +7,7 @@ Everything that runs on the Arduino UNO Q.
 | folder | status | what it is |
 |---|---|---|
 | `bringup/GyroTestCodeWorking.ino` | works on the board | first contact with the IMU: prints accel, gyro and compass readings about 3 times a second as text. Keep as a wiring test |
-| `fog_app/` | **runs on the board** (64.0 Hz, no lost samples); not yet tested on a leg | App Lab app: streams the IMU over the Bridge, runs the detector on the Linux side, serves a live web page on port 7000 over Wi-Fi, records labelled sessions. See its README |
+| `fog_app/` | **runs on the board** (64.0 Hz, no lost samples), worn by two volunteers | App Lab app: streams the IMU over the Bridge, runs the detector and the device API (port 8000, with the demo screen at `/demo`) on the Linux side, serves the diagnostics page on port 7000, records labelled sessions. See its README |
 | `detector/` | not started | hardware-free C port of the detector, tested on a laptop against `../test_vectors/` |
 
 Known from the bring-up sketch: the sensor is on **Wire2** (A4 = SDA, A5 = SCL), address **0x68**; plain
@@ -48,4 +48,5 @@ Sources: github.com/arduino/app-bricks-examples, github.com/arduino/app-bricks-p
 
 ## Not verified yet
 
-Power requirements, and `fog_app/` worn on a leg (it runs on the board; see its README).
+Power draw (Arduino specifies 5 V / 3 A; whether a phone's USB-C port can power the board is untried), the
+cue output on a real buzzer, and the polarity of `LED_BUILTIN` (see `fog_app/README.md`).

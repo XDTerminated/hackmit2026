@@ -6,7 +6,7 @@ of the window before the index can rise, so the cue lags by 2-4 s. (Patients' ga
 degrades before a freeze, which hides the problem in the patient datasets.)
 
 Candidates:
-  rect N s    plain window of N seconds (4 s is the current detector)
+  rect N s    plain window of N seconds (4 s was the v1 detector)
   ramp N s    N second window weighted linearly from 0 (oldest sample) to 1 (newest), so old
               walking counts for little while the frequency resolution of N seconds is kept
   ramp^2      the same with squared weights (even more emphasis on recent samples)
@@ -27,25 +27,25 @@ import numpy as np
 import pandas as pd
 from scipy.signal import resample
 
-from baseline_fi import SAMPLE_RATE_HZ, STEP_S, clean_dir, label_windows, score_subject, window_features
-from simulate_device import CueConfig, cue_logic
+from baseline_fi import SAMPLE_RATE_HZ, STEP_S, clean_dir, load_subject, window_features
+from simulate_device import CueConfig, cue_logic, simulate_subject
+from streaming_detector import DetectorParams
 
-FI_TH, POWER_TH = 1.056, 178.0
+FI_TH, POWER_TH = DetectorParams().fi_threshold, DetectorParams().power_threshold
 STEP = int(STEP_S * SAMPLE_RATE_HZ)
-CANDIDATES = [("rect 4 s (current)", 4, 0), ("rect 3 s", 3, 0), ("rect 2 s", 2, 0), ("rect 1.5 s", 1.5, 0),
-              ("ramp 4 s", 4, 1), ("ramp 3 s", 3, 1), ("ramp^2 4 s", 4, 2), ("ramp^2 3 s", 3, 2)]
+CANDIDATES = [("rect 4 s (v1)", 4, 0), ("rect 3 s", 3, 0), ("rect 2 s", 2, 0), ("rect 1.5 s", 1.5, 0),
+              ("ramp 4 s (v2; v3 adds the stop rule)", 4, 1), ("ramp 3 s", 3, 1), ("ramp^2 4 s", 4, 2), ("ramp^2 3 s", 3, 2)]
+
+
+_patients = {}   # (dataset, window, weighting) -> windowed segments; the two debounce settings share them
 
 
 def patient_scores(dataset, win_s, ramp_power, cfg):
-    results = []
-    for path in sorted(clean_dir(dataset).glob("*.csv")):
-        segments, cues = [], []
-        for _, seg in pd.read_csv(path).groupby("segment"):
-            freeze = seg["freeze"].to_numpy().astype(bool)
-            fi, power, end_idx = window_features(seg["acc_mag"].to_numpy(), int(win_s * SAMPLE_RATE_HZ), STEP, ramp_power)
-            segments.append(dict(end_idx=end_idx, freeze=freeze, **label_windows(freeze, end_idx)))
-            cues.append(cue_logic(fi, power, FI_TH, POWER_TH, cfg))
-        results.append(score_subject(segments, cues))
+    key = (dataset, win_s, ramp_power)
+    if key not in _patients:
+        _patients[key] = [load_subject(path, int(win_s * SAMPLE_RATE_HZ), STEP, ramp_power)
+                          for path in sorted(clean_dir(dataset).glob("*.csv"))]
+    results = [simulate_subject(segments, FI_TH, POWER_TH, cfg) for segments in _patients[key]]
     caught = sum(r["detected"] for r in results) / sum(r["episodes"] for r in results)
     false_per_h = sum(r["fa"] for r in results) / sum(r["hours"] for r in results)
     latencies = [x for r in results for x in r["latencies"]]
@@ -74,6 +74,8 @@ def healthy_scores(folder, win_s, ramp_power, cfg):
         win = int(win_s * SAMPLE_RATE_HZ)
         walking_only = np.array([set(label[i - win + 1:i + 1]) == {"walking"} for i in end_idx])
         walk_on, walk_n = walk_on + cue[walking_only].sum(), walk_n + walking_only.sum()
+    if not latencies:
+        return f"0/{bouts}", None, None, f"{100 * walk_on / walk_n:.0f}%"
     return f"{len(latencies)}/{bouts}", round(float(np.median(latencies)), 1), round(max(latencies), 1), f"{100 * walk_on / walk_n:.0f}%"
 
 

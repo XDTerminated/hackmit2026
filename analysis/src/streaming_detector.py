@@ -10,10 +10,10 @@ a handful of scalar state variables. No look-ahead, no growing memory.
 
 Commands:
   python src/streaming_detector.py --verify          check it reproduces the batch code on all
-                                                     of Daphnet, and what float32 changes
-  python src/streaming_detector.py --export          write test vectors to test_vectors/
+                                                     of Daphnet, and what float32 changes (the default)
   python src/streaming_detector.py --check-vectors   check it still reproduces test_vectors/
-  (no flag: --verify then --export)
+  python src/streaming_detector.py --export          rewrite test_vectors/ (the firmware contract: only
+                                                     after a deliberate change to the detector)
 """
 
 import argparse
@@ -63,6 +63,14 @@ class DetectorParams:
     gate_lookback_frames: int = 10       # 5 s
     gate_min_walk_frames: int = 2        # 1 s
     hold_frames: int = 10                # 5 s
+
+
+# The sensitivity presets of docs/api.md, as overrides of DetectorParams. The numbers live here, never in the app.
+PRESETS = {
+    "catch_more": dict(debounce_frames=1),
+    "balanced": dict(),
+    "fewer_alerts": dict(fi_threshold=1.656, power_threshold=13_335.0),
+}
 
 
 @dataclass
@@ -232,7 +240,9 @@ def verify():
     return ok
 
 
-# (name, subject, what to look for, chunk length in seconds)
+# (name, what to look for, chunk length in seconds)
+FLAG_COLUMNS = ("positive", "armed", "cue_on", "stopping")   # written as 0/1 and compared exactly
+
 SCENARIOS = [
     ("walk_then_freeze", "cue starts after walking runs into a freeze", 60),
     ("standing_still", "power below threshold the whole time, cue never on", 60),
@@ -300,7 +310,7 @@ def export():
 
         frames = run(detector, axes=axes)  # fresh state: exactly what the C code will see
         frames["label_freeze"] = part["freeze"].to_numpy()[frames.sample_index]
-        for col in ("positive", "armed", "cue_on"):
+        for col in FLAG_COLUMNS:
             frames[col] = frames[col].astype(int)
 
         pd.DataFrame(axes, columns=["ax_mg", "ay_mg", "az_mg"]).to_csv(
@@ -324,7 +334,7 @@ def check_vectors():
         axes = pd.read_csv(str(expected_path).replace("_expected", "_input")).to_numpy()
         got = run(StreamingDetector(), axes=axes)
         same = len(got) == len(expected) and all(
-            (got[c].astype(int) == expected[c]).all() for c in ("positive", "armed", "cue_on")
+            (got[c].astype(int) == expected[c]).all() for c in FLAG_COLUMNS
         ) and np.allclose(got["freeze_index"], expected["freeze_index"], rtol=1e-4)
         print(f"  {expected_path.name}: {len(got)} frames {'match' if same else 'DIFFER'}")
         ok &= same
@@ -342,11 +352,10 @@ def main():
         raise SystemExit(0 if check_vectors() else 1)
     if not CLEAN_DIR.exists():
         raise SystemExit(f"No cleaned data in {CLEAN_DIR}; run clean_daphnet.py first")
-    both = not (args.verify or args.export)
-    if args.verify or both:
+    if args.verify or not args.export:
         if not verify():
             raise SystemExit(1)
-    if args.export or both:
+    if args.export:
         export()
 
 

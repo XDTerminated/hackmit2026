@@ -1,7 +1,8 @@
 # Freezing-of-gait detector (HackMIT 2026)
 
 A shin-worn prototype that detects freezing of gait in Parkinson's disease from an IMU, plays a
-metronome cue to help the wearer restart walking, and logs events for a companion app.
+metronome cue on the wearer's phone, at their own walking pace, to help them restart walking, and logs
+events for a companion app.
 
 **Not a medical device.** Prototype for a demo; never tested on patients.
 
@@ -9,8 +10,8 @@ metronome cue to help the wearer restart walking, and logs events for a companio
 
 ```
 analysis/       Python: dataset cleaning, detector evaluation, firmware reference   (working)
-device/         Arduino UNO Q: portable C detector, STM32 sketch, Linux-side logger   (planned)
-app/            companion mobile app                                                  (planned)
+device/         Arduino UNO Q: the App Lab app that runs on the board (sketch + Python) (working)
+app/            companion phone app, Expo / React Native                              (working)
 test_vectors/   the contract between analysis/ and device/: input and expected-output CSVs
 docs/           dataset documentation and licences; API contract between device/ and app/
 data/           datasets; only small files are committed, see below

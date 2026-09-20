@@ -160,16 +160,18 @@ export function SettingsScreen({
               theme={theme}
               title="Match my walking pace"
               note={
-                status?.cadence_spm
-                  ? `The device measured ${status.cadence_spm} steps a minute while you walked. Cues play at that pace.`
-                  : 'Not measured yet: walk steadily for about ten seconds. Until then cues use the tempo below.'
+                !status?.cadence_spm
+                  ? 'Not measured yet: walk steadily for about ten seconds. Until then cues use the tempo below.'
+                  : settings.tempo_auto
+                    ? `The device measured ${status.cadence_spm} steps a minute while you walked. Cues play at ${status.cue_tempo_bpm ?? status.cadence_spm} beats a minute.`
+                    : `The device measured ${status.cadence_spm} steps a minute while you walked. Turn this on to cue at that pace.`
               }
               value={settings.tempo_auto}
               onChange={(on) => updateSettings({ tempo_auto: on })}
             />
             <Row
               theme={theme}
-              title={`${settings.tempo_auto ? 'Tempo until measured' : 'Tempo'} — ${settings.tempo_bpm} bpm`}
+              title={`${settings.tempo_auto ? (status?.cadence_spm ? 'Tempo if the pace is lost' : 'Tempo until measured') : 'Tempo'} — ${settings.tempo_bpm} bpm`}
               note="Set it to a comfortable walking rate, ideally with a physio. Too fast can make gait worse."
               right={
                 <View style={{ flexDirection: 'row', gap: theme.space(2) }}>

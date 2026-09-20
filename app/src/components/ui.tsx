@@ -43,6 +43,29 @@ export function Label({ theme, children }: { theme: Theme; children: React.React
   );
 }
 
+// A card that tells the wearer about a condition: a heading, a sentence, and optionally an action.
+export function Notice({
+  theme,
+  title,
+  text,
+  urgent,
+  children,
+}: {
+  theme: Theme;
+  title: string;
+  text: string;
+  urgent?: boolean;
+  children?: React.ReactNode;
+}) {
+  return (
+    <Card theme={theme} style={urgent ? { borderColor: theme.c.accent } : undefined}>
+      <Label theme={theme}>{title}</Label>
+      <Text style={{ ...theme.font.body, color: theme.c.text, marginTop: 4 }}>{text}</Text>
+      {children ? <View style={{ marginTop: theme.space(1.5) }}>{children}</View> : null}
+    </Card>
+  );
+}
+
 export function ConnectionBanner({
   theme,
   connection,

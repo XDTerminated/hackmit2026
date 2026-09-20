@@ -14,7 +14,8 @@ the primary audience of the app.
 _Avoid_: patient, user, subject
 
 **Device**:
-The ankle-worn hardware: the IMU, the board that runs the detector, and the buzzer.
+The shin-worn hardware: the IMU and the board that runs the detector. The prototype has no sounder of its own;
+the cue plays on the wearer's phone.
 _Avoid_: sensor, wearable, board
 
 **App**:

@@ -55,14 +55,17 @@ src/screens/           Now, History, Settings
 
 ## The three screens
 
-- **Now**: connection, what the device is doing, and when a cue plays, one large STOP. Stopping an
+- **On every tab**: the connection banner, and the last error in plain words.
+- **Now**: what the device is doing, and when a cue plays, one large STOP. Stopping an
   automatic cue also marks the event a false alarm, with a 20 s undo; a beat the wearer asked for is just
-  stopped. Also says so when the sensor has gone quiet or detection is off. Plus a wearer-triggered beat.
+  stopped. Also says so when the sensor has gone quiet or detection is off, shows the wearer's measured
+  walking pace, and offers a wearer-triggered beat.
 - **History**: cues today against yesterday, a 14-day stacked bar chart, and the share of cues
   followed by walking resuming — the only number that argues the device works. Tap a bar for that
   day's cues; tap a cue to mark it a false alarm.
-- **Settings**: device address, sensitivity presets with their measured trade-offs, cue output and
-  tempo, the walking gate, and pause.
+- **Settings**: device address, sensitivity presets with their measured trade-offs, cue output, "Match my
+  walking pace" (auto tempo, with the manual tempo as its fallback), sound and vibration, a 2 s cue test, the
+  walking gate, and pause.
 
 ## Decisions worth knowing
 

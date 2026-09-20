@@ -53,9 +53,7 @@ export type Settings = {
   cue_vibration: boolean;
   tempo_auto: boolean;
   tempo_bpm: number;
-  volume: number;
   cue_min_seconds: number;
-  log_events: boolean;
 };
 
 export type DaySummary = {
@@ -77,6 +75,9 @@ export type LiveMessage =
   | { type: 'event_created'; device_time: string; event: FogEvent };
 
 const TIMEOUT_MS = 6000;
+
+// The device's time format: ISO 8601, UTC, whole seconds.
+const isoSeconds = (date: Date) => date.toISOString().replace(/\.\d+Z$/, 'Z');
 const HISTORY_DAYS = 14;
 
 // FastAPI answers errors as {"detail": "..."}; show that sentence rather than the raw body.
@@ -126,7 +127,7 @@ export class DeviceClient {
   getSettings = () => this.request<Settings>('/settings');
   // Both cover the same HISTORY_DAYS, so every bar in the chart has its events behind it.
   getEvents = () => {
-    const since = new Date(Date.now() - HISTORY_DAYS * 86_400_000).toISOString().replace(/\.\d+Z$/, 'Z');
+    const since = isoSeconds(new Date(Date.now() - HISTORY_DAYS * 86_400_000));
     return this.request<{ events: FogEvent[] }>(`/events?since=${since}&limit=500`);
   };
   getSummary = () => this.request<Summary>(`/events/summary?days=${HISTORY_DAYS}`);
@@ -161,6 +162,6 @@ export class DeviceClient {
   syncTime = () =>
     this.request<{ device_time: string }>('/time', {
       method: 'POST',
-      body: JSON.stringify({ now: new Date().toISOString().replace(/\.\d+Z$/, 'Z') }),
+      body: JSON.stringify({ now: isoSeconds(new Date()) }),
     });
 }

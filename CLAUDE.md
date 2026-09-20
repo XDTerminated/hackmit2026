@@ -1,11 +1,13 @@
 # Freezing-of-gait detector: project notes
 
 Shin-worn prototype for HackMIT 2026: an IMU detects freezing of gait (FoG) in Parkinson's disease,
-a buzzer plays a metronome cue, events are logged for a companion app. Class/demo project,
+the wearer's phone plays a metronome cue at their own walking pace, events are logged for a companion app. Class/demo project,
 **not a medical device**, never tested on patients; demos use healthy volunteers simulating freezes.
 
 Hardware: Arduino UNO Q (Qualcomm Linux side + STM32, 3.3 V logic, Bridge/RPC via App Lab),
-GY-9250 / MPU-9250 over I2C (accel + gyro only), piezo buzzer, optional vibration motor, USB-C power bank.
+GY-9250 breakout over I2C (accel + gyro only; the chip is MPU6050-class, see Device notes). No buzzer or vibration
+motor is fitted: the phone is the cue, and the sketch still drives a buzzer pin as the fallback. Power over USB-C
+(laptop or charger; no power bank so far, and whether a phone can power the board is untested).
 
 ## Repo layout
 
@@ -13,14 +15,15 @@ Polyglot monorepo; each part has its own README and tooling, and the parts share
 
 - `analysis/` Python (uv). Working. Scripts in `analysis/src/`, run as `uv run src/<name>.py` from `analysis/`.
   Paths are resolved from the repo root, so scripts work from any directory.
-- `device/` UNO Q code. Planned: `device/detector/` (hardware-free C) plus the App Lab project.
-- `app/` companion mobile app. Planned; Expo (React Native) recommended, not yet confirmed by the team.
+- `device/` UNO Q code: `device/fog_app/` is the App Lab app that runs on the board, `device/bringup/` the wiring
+  test. It ships three files from `analysis/src/` (see Status). `device/detector/` (hardware-free C) is deferred.
+- `app/` companion phone app, Expo (React Native, TypeScript).
 - `test_vectors/` contract between `analysis/` and `device/`. Its README is the firmware spec.
-- `docs/` dataset docs and licences; `docs/api.md` (draft) is the device-to-app contract: user settings,
+- `docs/` dataset docs and licences; `docs/api.md` is the device-to-app contract: user settings,
   sensitivity presets with measured trade-offs, actions, status, events. Change it there first, then in code.
 - `data/<dataset>/raw` and `/clean` are gitignored. See README.md for how to fetch them.
 
-## Status (2026-09-19, branch `board-integration`)
+## Status (2026-09-20, branch `board-integration`, local only)
 
 **Analysis (works).** Daphnet and Mendeley cleaning, Freeze Index baseline, cue-logic simulation, latency, gyro,
 calibration and random-forest experiments, the streaming reference detector and the firmware test vectors.
@@ -33,21 +36,23 @@ sample rate and lost samples); `--verify` checks it against the batch code, `--c
 **Device (runs on the board).** `device/fog_app/` is the App Lab app: the sketch samples the IMU at 64 Hz and
 pushes each sample over the Bridge; `python/main.py` feeds two consumers. Port 8000 is the device API
 (`analysis/src/device_server.py`, Khai's server: presets and settings, SQLite event log, REST + WebSocket); it
-owns the cue and plays it at the wearer's own cadence (auto tempo, `cadence.py`). `http://<board>:8000/demo` is the demo screen (`demo_page.html`, fed by `GET /api/v1/frames`): what the real detector sees and
-decides, for a projector; it polls rather than use the WebSocket so it never counts as a connected phone.
-Port 7000 is the diagnostics page (`fog_core.py`):
-live charts, sample-rate check, labelled recording. If the API cannot start, the page's detector drives the cue.
+owns the cue and plays it at the wearer's own cadence (auto tempo, `cadence.py`). `http://<board>:8000/demo` is
+the demo screen (`demo_page.html`, fed by `GET /api/v1/frames`): what the real detector sees and decides, for a
+projector; it polls rather than use the WebSocket so it never counts as a connected phone. Port 7000 is the
+diagnostics page (`fog_core.py`): live charts, sample-rate check, labelled recording. If the API cannot start, the page's detector drives the cue.
 `bash device/fog_app/deploy.sh` deploys over USB (App Lab's adb), ships `device_server.py`,
-`streaming_detector.py` and `cadence.py` with the app, and forwards both ports to localhost. The app is the board's startup app.
+`streaming_detector.py`, `cadence.py` and `demo_page.html` with the app, and forwards both ports to localhost. The
+app is the board's startup app.
 Verified on the board: 64.0 Hz, no lost samples with both consumers, gravity 1047 mg, a still board reads
 1 mg^2, API reachable over USB and over the HackMIT Wi-Fi, WebSocket cue messages, no debug route.
 `device/bringup/` is the original wiring-test sketch. Wi-Fi: the board must share a network with the phone; a phone
 hotspot works (API median 29 ms, cue message ~50 ms), guest/hotel networks do not (captive portal, client
 isolation, confirmed on the Hyatt network); with no phone data to spare, the laptop's Windows Mobile hotspot works
-(`laptop-hotspot`, board at 192.168.137.x, API median 34 ms). Auto-join priorities are set on the board with nmcli (hotspots first, hotel Wi-Fi disabled); see
-`device/fog_app/README.md`.
+(`laptop-hotspot`, board at 192.168.137.x, API median 34 ms). Auto-join priorities are set on the board with nmcli
+(laptop hotspot, then phone hotspots; hotel Wi-Fi disabled); see `device/fog_app/README.md`.
 
-**App (type-checks and bundles; not yet exercised on a phone against the board).** Expo SDK 57, screens Now,
+**App (runs on a phone in Expo Go against the board; the team reports it works, auto tempo not yet tried worn).**
+Expo SDK 57, screens Now,
 History and Settings, in `app/`. `src/useDevice.ts` owns the link: one WebSocket, a full REST sync on every
 connect, reconnection, and every action through one error path shown on all tabs. The phone cue is a click
 and/or a vibration pulse on a drift-corrected beat. `CONTEXT.md` is the glossary; ADR 0001/0002 record
@@ -57,7 +62,19 @@ Behaviour worth knowing (all tested against the server): STOP holds (no new auto
 lets go of that freeze); a STOP when nothing plays answers `stopped: false`, so it can never mark an older
 event; `status.cue` lets an app that connects mid-cue show STOP; when the last app disconnects or goes to the
 background during a phone cue, the buzzer takes over; STOP silences the phone before it talks to the device.
-On the board the API has no authentication and no CORS; the wildcard CORS rule exists only in laptop replay.
+Since the second review (2026-09-20, all covered by `check_device_server.py`, which fails on the old server): a cue
+the device took over goes back to the phone when it reconnects, and a vanished phone is noticed within ~6 s
+(WebSocket ping 3 s); switching detection off or pausing ends an automatic cue, never a beat the wearer asked for;
+a stopped beat's timer cannot end the next beat; STOP on a requested beat keeps the automatic cue's latch; a
+sensor that goes quiet for 4 s ends the cue (`sensor_lost`); malformed requests answer 400; durations, the pause
+and `walking_resumed_s` use a monotonic clock; `walking_resumed_s` is now watched from the start of the cue
+(before, it could never be shorter than the cue); `peak_freeze_index` only counts positive windows. If the API
+thread dies or never binds its port, `LiveSource.alive()` turns false and `main.py` hands the cue to the
+diagnostics detector. The app has a 12 s silence watchdog, never opens a second socket, and matches
+`cue_stopped` to the cue it is playing. The `volume` and `log_events` settings were removed: nothing honoured them.
+The presets are defined once, in `streaming_detector.PRESETS`.
+On the board the API has no authentication and no CORS headers (which is not protection: bodiless POSTs and the
+WebSocket are not subject to CORS); the wildcard CORS rule exists only in laptop replay.
 
 Open decisions from the code review, not yet made: day boundaries are UTC on the server but times are shown
 locally (cues after 8 pm Boston time count as tomorrow); "cues today" is all events on Now but excludes false
@@ -65,9 +82,14 @@ alarms on History; the device address is not remembered between launches (needs 
 `app.json` forces light mode although a dark palette exists, and white-on-accent text in that dark palette is
 about 2.2:1; settings switches wait for the device's answer instead of updating optimistically; sensitivity is
 three switches rather than a radio list; the History chart's bars are narrow tap targets with no screen-reader
-alternative.
+alternative. From the second review, also open: the History toggle turns a `real` verdict into `null`
+after two taps; the STOP undo is lost on a tab switch; a dev or store build would need cleartext-HTTP and iOS
+local-network permissions in `app.json` (Expo Go does not); the diagnostics page (port 7000) always runs the
+balanced preset, so it can disagree with the real cue; `LED_BUILTIN` polarity is unchecked; `fewer_alerts` caught
+only 10/12 of our own simulated freezes.
 
-Not done: a worn test; own labelled recordings; the C port (`device/detector/`, deferred by ADR 0002).
+Not done: a worn test of auto tempo and of the demo screen; a stop-and-start session from a third person (the
+stop rule is provisional); the C port (`device/detector/`, deferred by ADR 0002).
 
 ## The detector (v3: recency-weighted window + stop rule; port this)
 
@@ -264,26 +286,32 @@ balanced caught 6/6, latency median 1.1 s (0.7-3.8 s), 1 false cue; catch_more 6
 
 ## Device notes
 
-Set the accelerometer to +-8 g (default +-2 g clips heel strikes, which reach 4-5 g in both datasets).
-Sample from a hardware timer. IMU low-pass ~20-40 Hz. Convert to mg first. First milestone: stream
-raw CSV to the laptop and confirm total band power is bimodal (tens of mg^2 still, >10^4 walking);
-if not, the amplitude thresholds need shifting before any C is written.
+As built: accelerometer at +-8 g (the default +-2 g clips heel strikes; our own recordings peak at 6.3 g), gyro
++-2000 dps, 20 Hz low-pass in the IMU, converted to mg on the STM32, sampling paced by `micros()` at 15,625 us
+(intervals alternate ~14.9 / 15.9 ms, mean 64.00 Hz, which is what the detector needs). The first milestone is
+met: band power on the worn sensor is bimodal (standing ~9 mg^2, walking ~10^5), so the amplitude thresholds
+stand.
 
 Known from bring-up: IMU on Wire2 (A4/A5), address 0x68; each `Serial.print()` reaches the Linux side as a
 separate message (batch output into one print); the chip can drop back to sleep after a power dip and must
 be re-initialised. The GY-9250 breakout reports WHO_AM_I 0x68: an MPU6050/9150-class chip, not an MPU-9250 (same family as Mendeley's sensor).
 
-Bridge/App Lab API is documented in `device/README.md` (taken from Arduino's example repos, not yet exercised by us).
+Bridge/App Lab API is documented in `device/README.md`; `notify`/`provide` in both directions and the `web_ui`
+brick are exercised by `fog_app` on the board.
 On Windows, a Python HTTP server bound to IPv4 only makes every `localhost` request take 2 s (IPv6 tried first);
 `dev_server.py` listens dual-stack for that reason.
 
-Unverified: UNO Q power needs, anything in `device/` on real hardware, and whether
+Unverified: UNO Q power draw (Arduino specifies 5 V / 3 A), and whether
 CMSIS-DSP `arm_rfft_fast_f32` uses the same unnormalised FFT convention as NumPy.
 
 ## Next steps
 
-1. Run `app/` on a real phone (Expo Go) against the board; check the click, the vibration and the STOP button.
-2. Wear it: confirm band power is bimodal (still tens of mg^2, walking >10^4), try simulated freezes, record
-   labelled sessions from the port-7000 page, run `check_recording.py`.
-3. Own recordings, then re-tune the amplitude thresholds -- on new recordings, never the ones reported from.
-4. `device/detector/`: the C port, still the plan of record (ADR-0002), no longer on the demo path.
+1. Worn test of the current build: auto tempo (does the measured pace appear after ~10 s of walking, does the cue
+   use it), the demo screen's three acts (stop, freeze, walk out of it), `catch_more` latency as felt.
+2. A stop-and-start session with no freezes from anyone new, scored with `evaluate_own.py`: the stop rule's 0.6 was
+   tuned on the two recordings it is reported from.
+3. Power: try the board on the phone's USB-C port (needs well under 4.5 W); if that works, USB networking to the
+   phone is possible (the kernel has NCM/ECM gadget modules; needs the board's sudo password).
+4. Feature candidates, in the order proposed: medication-timing log (freezes against hours since the last dose),
+   adaptive cue (escalate when walking has not resumed), gait summary from the cadence tracker.
+5. `device/detector/`: the C port, still the plan of record (ADR-0002), no longer on the demo path.

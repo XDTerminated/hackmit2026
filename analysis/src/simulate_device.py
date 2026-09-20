@@ -21,8 +21,10 @@ the reference for the STM32 port.
 With --nested the cue logic itself is also chosen inside each fold, which is the
 honest check that the configuration was not picked to fit the test subjects.
 
-Usage: python src/simulate_device.py [--window 4] [--min-spec X] [--nested 0.9]
+Usage: python src/simulate_device.py [--window 4] [--min-spec X] [--nested 0.9] [--ramp 1] [--stop-veto 0.6]
            [--dataset daphnet|mendeley] [--fixed-thresholds FI POWER] [--per-subject "CUE LOGIC NAME"]
+
+--ramp 1 --stop-veto 0.6 is the current (v3) detector; the defaults reproduce the original (v1) results.
 """
 
 import argparse
@@ -33,8 +35,9 @@ import pandas as pd
 
 from baseline_fi import (DATASETS, FI_GRID, POWER_GRID, SAMPLE_RATE_HZ, STEP_S, clean_dir, grid_counts, load_subject,
                          loso_cell, score_subject, summary_row)
+from streaming_detector import DetectorParams
 
-WALK_LOCO_POWER_MG2 = 10_000  # locomotion-band power is ~10-30 mg^2 standing, >10^4 walking
+WALK_LOCO_POWER_MG2 = DetectorParams().walk_loco_power  # locomotion-band power is ~10-30 mg^2 standing, >10^4 walking
 
 
 @dataclass
@@ -125,7 +128,7 @@ def simulate_subject(segments, fi_th, power_th, cfg, vetoes=None):
     return score_subject(segments, cues)
 
 
-def nested_selection(data, fold_thresholds, min_detected):
+def nested_selection(data, fold_thresholds, min_detected, vetoes=None):
     """Pick the cue logic inside each fold, using the training subjects only.
 
     For each held-out subject: among NESTED_GRID, take the configuration with the
@@ -133,12 +136,13 @@ def nested_selection(data, fold_thresholds, min_detected):
     least min_detected of their freeze episodes, then score it on the held-out one.
     """
     subjects = list(data)
+    vetoes = vetoes or {}
     cache = {}
 
     def result(subject, thresholds, cfg):
         key = (subject, thresholds, cfg.name)
         if key not in cache:
-            cache[key] = simulate_subject(data[subject], *thresholds, cfg)
+            cache[key] = simulate_subject(data[subject], *thresholds, cfg, vetoes.get(subject))
         return cache[key]
 
     held_out_results, chosen = [], []
@@ -151,6 +155,8 @@ def nested_selection(data, fold_thresholds, min_detected):
             fa = sum(r["fa"] for r in train) / sum(r["hours"] for r in train)
             if detected >= min_detected and fa < best_fa:
                 best, best_fa = cfg, fa
+        if best is None:
+            raise SystemExit(f"No cue logic catches {min_detected:.0%} of the training episodes with {held_out} held out")
         chosen.append(best.name)
         held_out_results.append(result(held_out, th, best))
     return held_out_results, chosen
@@ -173,7 +179,7 @@ def main():
     parser.add_argument("--stop-veto", type=float, default=0.0, metavar="RATIO",
                         help="ignore windows whose power is below RATIO x the previous window's "
                              "(0 = off, the original detector; 0.6 = current detector)")
-    parser.add_argument("--per-subject", metavar="CUE_LOGIC", default=None,
+    parser.add_argument("--per-subject", metavar="CUE_LOGIC", default=None, choices=[c.name for c in CONFIGS],
                         help="also print per-subject results for the named cue logic")
     args = parser.parse_args()
 
@@ -197,7 +203,7 @@ def main():
                         **{"cue logic": cfg.name})
             for cfg in CONFIGS]
     if args.nested is not None:
-        results, chosen = nested_selection(data, thresholds, args.nested)
+        results, chosen = nested_selection(data, thresholds, args.nested, vetoes)
         rows.append(summary_row(results, **{"cue logic": f"NESTED (>= {args.nested:.0%} of training episodes)"}))
 
     pd.set_option("display.width", 200)

@@ -9,8 +9,8 @@
 #              labelled recording. It never drives the cue while the device API is running.
 #
 # device_server.py, streaming_detector.py, cadence.py and demo_page.html are copied next to this file by ../deploy.sh. If the
-# device API cannot start (file missing, package missing), the app falls back to fog_core's own
-# detector driving the cue, so the board still works on its own.
+# device API cannot start (file missing, package missing, port taken) or dies later, the app falls back to
+# fog_core's own detector driving the cue, so the board still works on its own.
 
 import os
 import tempfile
@@ -60,11 +60,21 @@ except Exception as error:   # noqa: BLE001 - any failure here must not stop the
     logger.warning(f"Device API not started ({error!r}); the diagnostics detector will drive the cue")
 
 
+api_was_alive = api_source is not None
+
+
 def imu_sample(t_us, ax_mg, ay_mg, az_mg, gx_dps, gy_dps, gz_dps):
+    global api_was_alive
     cue_change = core.add_sample(t_us, ax_mg, ay_mg, az_mg, gx_dps, gy_dps, gz_dps)
-    if api_source is not None:
+    # start_on_board() returns before the server has bound its port, so ask every time whether anything
+    # is still reading the samples.
+    if api_source is not None and api_source.alive():
         api_source.push(t_us, ax_mg, ay_mg, az_mg)
-    elif cue_change is not None:
+        return
+    if api_was_alive:
+        api_was_alive = False
+        logger.error("The device API has stopped; the diagnostics detector drives the cue from now on")
+    if cue_change is not None:
         set_buzzer(cue_change)
 
 
@@ -102,6 +112,11 @@ def api_recording(name: str):
         return JSONResponse({"error": "no such recording"}, status_code=404)
     return FileResponse(path, media_type="text/csv", filename=path.name)
 
+
+try:
+    set_buzzer(False)   # a cue left playing on the STM32 by a previous run of this app
+except Exception as error:   # noqa: BLE001
+    logger.warning(f"Could not reset the cue output at start ({error!r})")
 
 Bridge.provide("imu_sample", imu_sample)
 Bridge.provide("imu_info", imu_info)

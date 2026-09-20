@@ -21,7 +21,8 @@ Status: implemented by `analysis/src/device_server.py` and consumed by `app/`. C
 Transport: HTTP + JSON on the local network, base URL `http://<device>:8000/api/v1`, plus one
 WebSocket at `ws://<device>:8000/api/v1/live` for anything the app must learn about immediately.
 REST is for settings, history and actions; the socket is for live state. The app finds the device by
-its address, typed once and remembered: there is no discovery protocol. No auth for the demo (say so
+its address (`arduino.local:8000` by default, or typed in; the app does not yet remember it between
+launches): there is no discovery protocol. No auth for the demo (say so
 in the writeup; real use needs pairing and encryption, this is health data).
 
 ## Settings
@@ -39,9 +40,7 @@ updated object.
 | `cue_vibration` | bool | `false` | | a pulse on the same beat: the phone vibrates when `cue_output` is `"phone"`, otherwise the device's vibration motor (not fitted on the prototype) |
 | `tempo_auto` | bool | `true` | | play the cue at the wearer's own walking cadence, measured by the device (see Auto tempo below). Off: always `tempo_bpm` |
 | `tempo_bpm` | int | `100` | 60 to 140 | metronome rate when `tempo_auto` is off, and the fallback until a cadence has been measured. Should be set to the wearer's comfortable stepping rate, ideally with their physio. Fast rates can make gait worse |
-| `volume` | int | `70` | 0 to 100 | buzzer loudness |
 | `cue_min_seconds` | int | `5` | 3 to 15 | a cue plays at least this long, and keeps going while the freeze continues |
-| `log_events` | bool | `true` | | store freeze events |
 
 At least one of `cue_sound` / `cue_vibration` must stay on while `detection_enabled` is true; the
 device rejects a change that would silence both.
@@ -101,11 +100,11 @@ are recordings from the real sensor.
 
 | request | body | effect |
 |---|---|---|
-| `POST /cue/start` | `{"seconds": 10}` (3 to 60) | wearer-triggered metronome, independent of detection. Logged as an event with `trigger: "manual"` |
+| `POST /cue/start` | `{"seconds": 10}` (3 to 60) | wearer-triggered metronome, independent of detection (a pause does not end it). Logged as an event with `trigger: "manual"`. One cue at a time: while a cue is playing this changes nothing and answers with the status |
 | `POST /cue/stop` | `{"feedback": "false_alarm"}` (optional) | stop the cue that is playing and optionally record the wearer's verdict on it. Answers `{"stopped": true, "event_id": n}`, or `{"stopped": false, "event_id": null}` when nothing was playing, so a late STOP can never mark an older event. After the wearer stops an automatic cue, no new one starts until the detector has let go of that freeze |
-| `POST /pause` | `{"minutes": 15}` (1 to 240) | suspend automatic detection (sitting in a car, at dinner). Resumes by itself |
+| `POST /pause` | `{"minutes": 15}` (1 to 240) | suspend automatic detection (sitting in a car, at dinner) and end an automatic cue that is playing. Resumes by itself. Switching `detection_enabled` off ends an automatic cue in the same way |
 | `POST /resume` | | end a pause early |
-| `POST /cue/test` | | 2 s of the current cue settings, for setup |
+| `POST /cue/test` | | 2 s of the current cue settings, for setup: a `cue_started` / `cue_stopped` pair with `trigger: "test"` and `event_id: null`, logged nowhere. Does nothing (`testing: false`) while a real cue is playing |
 | `POST /time` | `{"now": "2026-09-19T15:04:05Z"}` | set the device clock. The app sends this on every connect |
 
 ## Demo screen
@@ -157,8 +156,8 @@ socket drops; nothing here is unique to the socket, so a missed message costs li
 |---|---|---|
 | `status` | the `GET /status` body | on connect, then whenever `state` or `cue_active` changes, and at least every 5 s as a heartbeat |
 | `cue_started` | `{"event_id": 412, "output": "buzzer", "tempo_bpm": 100, "trigger": "auto"}` | the instant a cue starts. `output` is what actually played, after the fallback rule above |
-| `cue_stopped` | `{"event_id": 412, "reason": "finished"}` | `reason`: `"finished"`, `"stopped_by_user"`, `"paused"` |
-| `event_created` | the full event object from `GET /events` | when an event is closed and written to the log, which is after `cue_stopped` |
+| `cue_stopped` | `{"event_id": 412, "reason": "finished"}` | `reason`: `"finished"`, `"stopped_by_user"`, `"paused"` (paused or detection switched off), `"sensor_lost"` (no samples for 4 s: nothing else could end the cue). Match `event_id` against the cue being played |
+| `event_created` | `{"event": {...}}`, the full event object from `GET /events` | when an event is closed and written to the log, which is after `cue_stopped` |
 
 The event is not final when the cue starts: `duration_s` and `walking_resumed_s` are only known
 afterwards. So `cue_started` carries an `event_id` the app can hold, and `event_created` delivers the
@@ -169,8 +168,9 @@ finished record under that same id.
 The device has no guaranteed battery-backed clock, so after a power cycle its time may be nonsense
 and every chart drawn from its events would be wrong. The device still timestamps its own events —
 the app is often closed or out of range when they happen, so arrival time is not event time — and
-the app corrects the clock with `POST /time` on every connect. `GET /status` returns `device_time`
-so the app can show a warning when the two disagree by more than a few seconds.
+the app corrects the clock with `POST /time` on every connect (a time without a zone is read as UTC).
+Durations, the pause and `walking_resumed_s` are measured on a monotonic clock, so setting the time in the
+middle of a cue cannot corrupt them.
 
 ## Events
 
@@ -183,7 +183,7 @@ so the app can show a warning when the two disagree by more than a few seconds.
   "duration_s": 7.5,
   "trigger": "auto",
   "peak_freeze_index": 3.4,
-  "cue": {"sound": true, "vibration": false, "tempo_bpm": 100},
+  "cue": {"sound": true, "vibration": false, "output": "phone", "tempo_bpm": 100},
   "walking_resumed_s": 4.0,
   "sensitivity": "balanced",
   "feedback": null
@@ -191,10 +191,13 @@ so the app can show a warning when the two disagree by more than a few seconds.
 ```
 
 - `trigger`: `"auto"` or `"manual"`.
-- `peak_freeze_index`: highest value during the event; the nearest thing to a confidence score that
+- `cue.output`: where the cue started (`"phone"` or `"buzzer"`); a takeover in the middle of the cue is not
+  recorded. `cue.tempo_bpm` is the tempo actually played, which with auto tempo is the measured cadence.
+- `peak_freeze_index`: highest value among the event's positive windows; the nearest thing to a confidence score that
   the detector has. Show it as weak / strong, not as a probability.
-- `walking_resumed_s`: seconds from cue start until locomotion-band power was back above the walking
-  level, or `null` if it did not happen within 15 s.
+- `walking_resumed_s`: seconds from cue start until the wearer was walking again (locomotion-band power above
+  the walking level with the freeze index back under its line), watched while the cue plays and for 15 s after
+  it ends; `null` if it did not happen.
 - `feedback`: `null`, `"real"` or `"false_alarm"`, set with `PATCH /events/{id}` body
   `{"feedback": "false_alarm"}`. This is the only ground truth the device will ever get from real
   use, so make it one tap in the app. The STOP button on the live screen is that tap: stopping a cue
@@ -203,8 +206,9 @@ so the app can show a warning when the two disagree by more than a few seconds.
   history list. Stopping a cue never suspends detection — that is `POST /pause`, deliberately
   separate, so the device is never silently disarmed.
 
-`GET /events/summary?days=14` returns per-day counts (`auto`, `manual`, `false_alarm`) and mean
-duration, for the trend chart shown to a doctor or physio.
+`GET /events/summary?days=14` returns `days`, one entry per day with counts (`auto`, `manual`, `false_alarm`),
+`mean_duration_s`, and `resumed` out of `with_outcome` (events not marked false alarms), plus the overall
+`walking_resumed_rate`, for the trend chart shown to a doctor or physio.
 
 ## Developing without hardware
 
@@ -229,7 +233,8 @@ and nobody will notice. It is the one route in this document that is mock-only.
   socket, callable from plain Python, so an RPC call is the likely answer; how fast a setting takes
   effect is still unmeasured. With the detector on the Linux side (ADR-0002), most settings never
   reach the STM32 at all — only the cue ones do.
-- Whether `volume` is meaningful for a piezo on a digital pin; it may need PWM or become on/off.
+- Loudness. A `volume` setting was dropped: nothing could honour it (the pin is on/off, and the phone has its
+  own volume buttons). Likewise `log_events`: a "do not log" switch that is silently ignored is worse than none.
 - Cue latency with the detector on the Linux side (ADR-0002): the STM32 -> Linux hop plus Python
   scheduling jitter is unmeasured, and only matters if it is large against the 1.8 s detection
   latency.

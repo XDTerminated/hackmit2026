@@ -23,11 +23,13 @@ from pathlib import Path
 
 import numpy as np
 
-SAMPLE_RATE_HZ = 64
+from streaming_detector import DetectorParams
+
+SAMPLE_RATE_HZ = DetectorParams().sample_rate_hz
 WINDOW_S = 6                     # about 4-6 strides
 STRIDE_RANGE_S = (0.8, 2.2)      # 55-150 steps per minute
 MIN_STRENGTH = 0.4               # autocorrelation at the stride lag, 1 = perfectly periodic
-WALK_LOCO_POWER = 10_000.0       # mg^2, the detector's walking gate
+WALK_LOCO_POWER = DetectorParams().walk_loco_power   # mg^2, the detector's walking gate
 MAX_WALK_FREEZE_INDEX = 0.7      # steady walking sits at 0.2-0.5; a tremble is periodic too, keep it out
 ESTIMATE_EVERY_FRAMES = 4        # 2 s
 KEEP_ESTIMATES = 150             # the median covers the last 5 minutes of steady walking
@@ -48,6 +50,8 @@ def stride_time_s(magnitude_mg, rate_hz=SAMPLE_RATE_HZ):
     if not peaks:
         return None, 0.0
     best = max(peaks, key=lambda i: ac[i])
+    if ac[best] <= 0:   # no rhythm in the stride range at all
+        return None, 0.0
     # Two strides are as periodic as one. Take the shortest lag that is nearly as strong as the best.
     best = next(i for i in peaks if ac[i] >= 0.85 * ac[best])
     # Parabola through the peak and its neighbours: finer than the 1/64 s sample spacing.
@@ -63,7 +67,7 @@ class CadenceTracker:
         self.estimates = deque(maxlen=KEEP_ESTIMATES)
         self.initial_spm = initial_spm   # remembered from an earlier run until this one has its own
         self.walking_frames = 0          # consecutive frames of steady walking
-        self.frames_per_window = WINDOW_S * 2   # detector frames are 0.5 s apart
+        self.frames_per_window = WINDOW_S * rate_hz // DetectorParams().step   # detector frames are 0.5 s apart
 
     def push(self, magnitude_mg):
         self.samples.append(magnitude_mg)

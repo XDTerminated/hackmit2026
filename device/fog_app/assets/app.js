@@ -9,7 +9,7 @@ const $ = (id) => document.getElementById(id);
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
 let samples = [];          // [sample number, |acc| mg]
-let frames = [];           // {n, fi, power, positive, cue, state}
+let frames = [];           // {n, fi, power, cue, state}
 let lastSample = 0, lastFrame = 0;
 let status = null, recording = { active: false, label: "" };
 let failures = 0;
@@ -308,5 +308,8 @@ document.addEventListener("keydown", (e) => {
 
 window.addEventListener("resize", () => { drawMagnitude(); drawFreezeIndex(); });
 refreshRecordings();
-poll();
-setInterval(poll, POLL_MS);
+// One request at a time: two in flight carry the same since_sample, and their samples would be drawn twice.
+(async function pollLoop() {
+  await poll();
+  setTimeout(pollLoop, POLL_MS);
+})();

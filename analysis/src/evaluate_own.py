@@ -22,10 +22,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from streaming_detector import DetectorParams, StreamingDetector, run
+from streaming_detector import PRESETS, DetectorParams, StreamingDetector, run
 
 RAW_DIR = Path(__file__).resolve().parents[2] / "data" / "own" / "raw"
-PRESETS = {"balanced": dict(debounce_frames=2), "catch_more": dict(debounce_frames=1)}
 HOLD_TAIL_S = 6        # a cue starting this soon after a freeze ends is carry-over, not a false cue
 
 
@@ -35,6 +34,21 @@ def bouts(labels):
     return [(labels[a], a, b) for a, b in zip(edges[:-1], edges[1:])]
 
 
+def score_cues(labels, index, cue, rate):
+    """One recording's cue output against its labels.
+
+    index[i] is the sample at which frame i ends and cue[i] the cue state there. Returns (number of
+    freeze bouts, latency in seconds of each one that was caught, sample index of each false cue).
+    """
+    freezes = [(a, b) for name, a, b in bouts(labels) if name == "freezing"]
+    hits = [index[cue & (index >= a) & (index < b)] for a, b in freezes]
+    latencies = [(h[0] - a) / rate for h, (a, _) in zip(hits, freezes) if len(h)]
+    starts = index[cue & ~np.concatenate([[False], cue[:-1]])]
+    false_cues = [s for s in starts if labels[s] != "freezing"
+                  and not any(0 <= s - end < HOLD_TAIL_S * rate for _, end in freezes)]
+    return len(freezes), latencies, false_cues
+
+
 def evaluate(path, params):
     rate = params.sample_rate_hz
     data = pd.read_csv(path)
@@ -42,23 +56,12 @@ def evaluate(path, params):
     frames = run(StreamingDetector(params), axes=data[["ax_mg", "ay_mg", "az_mg"]].to_numpy())
     index, cue = frames["sample_index"].to_numpy(), frames["cue_on"].to_numpy()
 
-    freezes = [(a, b) for name, a, b in bouts(labels) if name == "freezing"]
-    latencies, missed = [], 0
-    for start, end in freezes:
-        hits = index[cue & (index >= start) & (index < end)]
-        if len(hits):
-            latencies.append((hits[0] - start) / rate)
-        else:
-            missed += 1
-
-    starts = index[cue & ~np.concatenate([[False], cue[:-1]])]
-    false_cues = [s for s in starts if labels[s] != "freezing"
-                  and not any(0 <= s - end < HOLD_TAIL_S * rate for _, end in freezes)]
+    n_freezes, latencies, false_cues = score_cues(labels, index, cue, rate)
 
     frames["label"] = labels[index]
     per_label = frames[frames["label"] != ""].groupby("label").agg(
         frames=("cue_on", "size"), cue_on=("cue_on", "mean"), median_power=("total_power", "median"))
-    return dict(freezes=len(freezes), missed=missed, latencies=latencies,
+    return dict(freezes=n_freezes, missed=n_freezes - len(latencies), latencies=latencies,
                 false_cues=[(s / rate, labels[s] or "unlabelled") for s in false_cues],
                 minutes=len(data) / rate / 60, per_label=per_label)
 

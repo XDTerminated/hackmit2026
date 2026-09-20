@@ -26,6 +26,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import logging
 import math
 import os
 import queue
@@ -33,6 +34,7 @@ import random
 import sqlite3
 import sys
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -47,12 +49,13 @@ from fastapi.responses import FileResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cadence import CadenceTracker  # noqa: E402
-from streaming_detector import DetectorParams, SampleClock, StreamingDetector  # noqa: E402
+from streaming_detector import PRESETS, DetectorParams, SampleClock, StreamingDetector  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 VECTOR_DIR = ROOT / "test_vectors"
 CLEAN_DIR = ROOT / "data" / "daphnet" / "clean"
 DB_PATH = Path(os.environ.get("FOG_DB", ROOT / "analysis" / "device.sqlite3"))
+logger = logging.getLogger("device_server")
 DEMO_PAGE = Path(__file__).resolve().parent / "demo_page.html"   # deploy.sh ships it next to this file
 
 FIRMWARE = "0.1.0"
@@ -63,13 +66,6 @@ TEMPO_RANGE_BPM = (60, 140)
 # offset for people who freeze (Willems 2006: 10% slower; Arias & Cudeiro 2010: 10% faster), so match it.
 AUTO_TEMPO_FACTOR = 1.0
 CADENCE_KEY = "measured_cadence_spm"   # settings table; not a user setting
-
-# docs/api.md: sensitivity presets. The thresholds live here, never in the app.
-PRESETS = {
-    "catch_more": dict(fi_threshold=1.056, power_threshold=178.0, debounce_frames=1),
-    "balanced": dict(fi_threshold=1.056, power_threshold=178.0, debounce_frames=2),
-    "fewer_alerts": dict(fi_threshold=1.656, power_threshold=13_335.0, debounce_frames=2),
-}
 
 DEFAULT_SETTINGS = {
     "detection_enabled": True,
@@ -84,9 +80,7 @@ DEFAULT_SETTINGS = {
     # tempo_bpm is then only the fallback until enough steady walking has been seen.
     "tempo_auto": True,
     "tempo_bpm": 100,
-    "volume": 70,
     "cue_min_seconds": 5,
-    "log_events": True,
 }
 
 SETTING_RULES = {
@@ -98,9 +92,7 @@ SETTING_RULES = {
     "cue_vibration": (bool, None),
     "tempo_auto": (bool, None),
     "tempo_bpm": (int, TEMPO_RANGE_BPM),
-    "volume": (int, (0, 100)),
     "cue_min_seconds": (int, (3, 15)),
-    "log_events": (bool, None),
 }
 
 
@@ -156,6 +148,13 @@ class LiveSource(SampleSource):
     def __init__(self):
         self.queue: queue.Queue = queue.Queue(maxsize=SAMPLE_RATE_HZ * 10)
         self.clock = SampleClock(SAMPLE_RATE_HZ)
+        self.server_thread: threading.Thread | None = None
+        self.loop_ended = False   # set if Device.run() ever returns or dies
+
+    def alive(self) -> bool:
+        """False once nothing reads these samples any more (port taken, server crashed): the caller
+        must then cue by other means. start_on_board() returns before the server has bound its port."""
+        return self.server_thread is not None and self.server_thread.is_alive() and not self.loop_ended
 
     @property
     def rate_hz(self) -> float:
@@ -266,7 +265,7 @@ def event_row_to_json(row: sqlite3.Row) -> dict:
 @dataclass
 class OpenEvent:
     id: int
-    started: datetime
+    started: float             # time.monotonic(): durations must survive the app setting the clock
     peak_fi: float = 0.0
     trigger: str = "auto"
     resumed_s: float | None = None
@@ -286,7 +285,10 @@ class Device:
     clock_offset: timedelta = timedelta(0)
     measured_rate_hz: float = float(SAMPLE_RATE_HZ)
     open_event: OpenEvent | None = None
-    manual_until: datetime | None = None
+    pause_deadline: float = 0.0        # time.monotonic() at which paused_until (shown to the wearer) runs out
+    hold_until: float = 0.0            # replay only: a forced cue the detector may not end before this
+    quiet_blocks: int = 0              # consecutive 2 s waits with no samples
+    tasks: set = field(default_factory=set)   # keeps fire-and-forget tasks from being garbage collected
     clients: set[WebSocket] = field(default_factory=set)
     sensor_ok: bool = True
     # The cue playing right now, as the app needs it: event_id, output, tempo_bpm, trigger.
@@ -324,21 +326,27 @@ class Device:
         return now_utc() + self.clock_offset
 
     # -- detector ---------------------------------------------------------
-    def make_detector(self) -> StreamingDetector:
-        preset = PRESETS[self.settings["sensitivity"]]
-        params = DetectorParams(
-            fi_threshold=preset["fi_threshold"],
-            power_threshold=preset["power_threshold"],
-            debounce_frames=preset["debounce_frames"],
+    def detector_params(self) -> DetectorParams:
+        return DetectorParams(
+            **PRESETS[self.settings["sensitivity"]],
             gate_min_walk_frames=2 if self.settings["walking_gate"] else 0,
-            hold_frames=max(1, round(self.settings["cue_min_seconds"] * 2)),
+            hold_frames=max(1, round(self.settings["cue_min_seconds"] * SAMPLE_RATE_HZ / STEP)),
         )
-        return StreamingDetector(params)
+
+    def make_detector(self) -> StreamingDetector:
+        return StreamingDetector(self.detector_params())
 
     def detection_live(self) -> bool:
         if not self.settings["detection_enabled"]:
             return False
-        return not (self.paused_until and self.now() < self.paused_until)
+        if self.paused_until and time.monotonic() >= self.pause_deadline:
+            self.paused_until = None
+        return self.paused_until is None
+
+    def spawn(self, coroutine) -> None:
+        task = asyncio.create_task(coroutine)
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
 
     # -- websocket --------------------------------------------------------
     async def broadcast(self, kind: str, payload: dict) -> None:
@@ -400,7 +408,7 @@ class Device:
         )
         self.db.commit()
         self.cue_active = True
-        self.open_event = OpenEvent(id=cursor.lastrowid, started=self.now(),
+        self.open_event = OpenEvent(id=cursor.lastrowid, started=time.monotonic(),
                                     peak_fi=freeze_index, trigger=trigger)
         self.active_cue = {"event_id": self.open_event.id, "output": output,
                            "tempo_bpm": tempo, "trigger": trigger}
@@ -411,7 +419,7 @@ class Device:
         if not self.cue_active or self.open_event is None:
             return
         event = self.open_event
-        duration = max(0.5, (self.now() - event.started).total_seconds())
+        duration = max(0.5, time.monotonic() - event.started)
         self.db.execute(
             "UPDATE events SET duration_s = ?, peak_freeze_index = ?, feedback = COALESCE(?, feedback) "
             "WHERE id = ?",
@@ -420,12 +428,12 @@ class Device:
         self.db.commit()
         self.cue_active = False
         self.active_cue = None
-        self.manual_until = None
+        self.hold_until = 0.0
         event.watching_resume = True
         self.drive_buzzer(False)
         await self.broadcast("cue_stopped", {"event_id": event.id, "reason": reason})
         # The event stays open for up to 15 s so walking_resumed_s can be filled in.
-        asyncio.create_task(self.finalise_event(event))
+        self.spawn(self.finalise_event(event))
 
     async def finalise_event(self, event: OpenEvent) -> None:
         deadline = 15.0 / max(self.speed, 1.0)
@@ -440,6 +448,13 @@ class Device:
         row = self.db.execute("SELECT * FROM events WHERE id = ?", (event.id,)).fetchone()
         if row:
             await self.broadcast("event_created", {"event": event_row_to_json(row)})
+
+    def phone_connected(self) -> None:
+        """Give a cue back to the phone it was meant for: a Wi-Fi blip must not cost the rest of the cue."""
+        if (self.cue_active and self.active_cue and self.active_cue["output"] == "buzzer"
+                and self.settings["cue_output"] == "phone"):
+            self.active_cue["output"] = "phone"
+            self.drive_buzzer(False)
 
     def phone_disconnected(self) -> None:
         """A cue playing on the phone must not go silent because the phone went away."""
@@ -476,7 +491,12 @@ class Device:
                     self.sensor_ok = block is not None
                     await self.broadcast("status", self.status())
                 if block is None:
+                    # No samples, no detector frames: nothing else would ever end this cue.
+                    self.quiet_blocks += 1
+                    if self.cue_active and self.open_event.trigger == "auto" and self.quiet_blocks >= 2:
+                        await self.stop_cue("sensor_lost")
                     continue
+                self.quiet_blocks = 0
                 self.measured_rate_hz = self.source.rate_hz
             else:
                 block = [next(stream) for _ in range(STEP)]
@@ -492,7 +512,10 @@ class Device:
                     frame = got
 
             if frame is not None:
-                await self.on_frame(frame)
+                try:
+                    await self.on_frame(frame)
+                except Exception:   # noqa: BLE001 - one bad frame must not end detection for good
+                    logger.exception("frame handling failed")
 
             if not self.source.live:   # a live sensor paces the loop by itself
                 elapsed = loop.time() - tick
@@ -510,13 +533,22 @@ class Device:
     async def on_frame(self, frame) -> None:
         walking = frame.loco_power > DetectorParams().walk_loco_power
         previous_state = self.state
-        self.track_cadence(frame)
+        try:
+            self.track_cadence(frame)
+        except Exception:   # noqa: BLE001 - the tempo is a nicety; the cue is not
+            logger.exception("cadence tracking failed")
 
-        if self.open_event and self.open_event.watching_resume and walking:
-            if self.open_event.resumed_s is None:
-                self.open_event.resumed_s = (self.now() - self.open_event.started).total_seconds()
+        # Walking again: walking-level rhythm with the freeze index back under its line. Watched from the
+        # start of the cue (the wearer is meant to walk off while it plays) until 15 s after it ends.
+        event = self.open_event
+        if event and (self.cue_active or event.watching_resume) and event.resumed_s is None:
+            if walking and frame.freeze_index < DetectorParams().fi_threshold:
+                event.resumed_s = time.monotonic() - event.started
 
         if not self.detection_live():
+            # Switched off or paused in the middle of an automatic cue: nothing below would ever end it.
+            if self.cue_active and self.open_event.trigger == "auto":
+                await self.stop_cue("paused")
             self.state = "walking" if walking else "still"
         elif self.cue_active and self.open_event and self.open_event.trigger == "manual":
             self.state = "walking" if walking else "still"
@@ -525,11 +557,13 @@ class Device:
                 self.wearer_stopped = False
             if frame.cue_on and not self.cue_active and not self.wearer_stopped:
                 await self.start_cue("auto", frame.freeze_index)
-            elif not frame.cue_on and self.cue_active and self.open_event.trigger == "auto":
+            elif (not frame.cue_on and self.cue_active and self.open_event.trigger == "auto"
+                  and time.monotonic() >= self.hold_until):
                 await self.stop_cue("finished")
             self.state = "freeze_detected" if self.cue_active else ("walking" if walking else "still")
 
-        if self.open_event and self.cue_active:
+        # Only positive frames: in the still part of a cue's hold the index is a ratio of two near-zeros.
+        if self.open_event and self.cue_active and frame.positive:
             self.open_event.peak_fi = max(self.open_event.peak_fi, frame.freeze_index)
 
         self.n_frames += 1
@@ -590,6 +624,14 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
         loop_task = asyncio.create_task(device.run())
+
+        def loop_ended(task):
+            if isinstance(device.source, LiveSource):
+                device.source.loop_ended = True
+            if not task.cancelled() and task.exception():
+                logger.error("the detector loop died: %r", task.exception())
+
+        loop_task.add_done_callback(loop_ended)
         yield
         loop_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -597,10 +639,10 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
 
     app = FastAPI(title="FoG device API", version=FIRMWARE, lifespan=lifespan)
     if debug_routes:
-        # Laptop replay only: lets the Expo app run in a browser against this server. On the board
-        # the API has no authentication (docs/api.md), so browsers get no cross-origin access:
-        # otherwise any web page open on the same network could change settings or pause detection.
-        # The native app is not a browser and needs no CORS.
+        # Laptop replay only: lets a browser tool on another origin read this server. On the board the API
+        # has no authentication (docs/api.md) and sends no CORS headers, so a web page on the same network
+        # cannot read it or change settings. That is not protection: bodiless POSTs (/cue/stop, /resume)
+        # and the WebSocket are not subject to CORS. The native app is not a browser and needs none.
         app.add_middleware(
             CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
         )
@@ -637,6 +679,12 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
         await device.broadcast("status", device.status())
         return device.settings
 
+    def whole_number(body: dict, key: str, default: int, low: int, high: int) -> int:
+        value = body.get(key, default)
+        if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
+            raise HTTPException(400, f"{key} must be a whole number between {low} and {high}")
+        return value
+
     # -- status -----------------------------------------------------------
     @app.get(api + "/status")
     def get_status():
@@ -645,30 +693,33 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
     @app.post(api + "/time")
     def set_time(body: dict = Body(...)):
         raw = body.get("now")
-        if not raw:
+        if not isinstance(raw, str) or not raw:
             raise HTTPException(400, "body must be {\"now\": \"<ISO time>\"}")
         try:
             target = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         except ValueError:
-            raise HTTPException(400, f"could not parse '{raw}' as an ISO time")
+            raise HTTPException(400, f"could not parse '{raw}' as an ISO time") from None
+        if target.tzinfo is None:
+            target = target.replace(tzinfo=timezone.utc)
         device.clock_offset = target - now_utc()
         return {"device_time": iso(device.now())}
 
     # -- actions ----------------------------------------------------------
     @app.post(api + "/cue/start")
     async def cue_start(body: dict = Body(default={})):
-        seconds = int(body.get("seconds", 10))
-        if not 3 <= seconds <= 60:
-            raise HTTPException(400, "seconds must be between 3 and 60")
+        seconds = whole_number(body, "seconds", 10, 3, 60)
+        if device.cue_active:   # one cue at a time; the one that is playing stays as it is
+            return device.status()
         await device.start_cue("manual")
-        device.manual_until = device.now() + timedelta(seconds=seconds)
+        event_id = device.open_event.id
 
         async def auto_stop():
             await asyncio.sleep(seconds)
-            if device.cue_active and device.open_event and device.open_event.trigger == "manual":
+            # Only this beat: the wearer may have stopped it and asked for another since.
+            if device.cue_active and device.open_event.id == event_id:
                 await device.stop_cue("finished")
 
-        asyncio.create_task(auto_stop())
+        device.spawn(auto_stop())
         return device.status()
 
     @app.post(api + "/cue/stop")
@@ -682,12 +733,15 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
         if not device.cue_active:
             return {"stopped": False, "event_id": None}
         event = device.open_event
-        device.wearer_stopped = event.trigger == "auto"
+        if event.trigger == "auto":   # stopping a beat the wearer asked for must not release an earlier latch
+            device.wearer_stopped = True
         await device.stop_cue("stopped_by_user", feedback)
         return {"stopped": True, "event_id": event.id}
 
     @app.post(api + "/cue/test")
     async def cue_test():
+        if device.cue_active:   # a test must never interrupt, or later silence, a cue that is really playing
+            return {"testing": False, "seconds": 0}
         await device.broadcast(
             "cue_started",
             {"event_id": None, "output": device.settings["cue_output"],
@@ -701,16 +755,15 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
                 device.drive_buzzer(False)
             await device.broadcast("cue_stopped", {"event_id": None, "reason": "finished"})
 
-        asyncio.create_task(end())
+        device.spawn(end())
         return {"testing": True, "seconds": 2}
 
     @app.post(api + "/pause")
     async def pause(body: dict = Body(...)):
-        minutes = int(body.get("minutes", 15))
-        if not 1 <= minutes <= 240:
-            raise HTTPException(400, "minutes must be between 1 and 240")
+        minutes = whole_number(body, "minutes", 15, 1, 240)
         device.paused_until = device.now() + timedelta(minutes=minutes)
-        if device.cue_active:
+        device.pause_deadline = time.monotonic() + minutes * 60
+        if device.cue_active and device.open_event.trigger == "auto":   # a beat the wearer asked for plays on
             await device.stop_cue("paused")
         await device.broadcast("status", device.status())
         return device.status()
@@ -800,11 +853,14 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
     # projector page must never make the device believe a phone is there to play the cue.
     @app.get(api + "/frames")
     def get_frames(since_frame: int = 0, since_sample: int = 0):
-        preset = PRESETS[device.settings["sensitivity"]]
+        params = device.detector_params()
         return {
             "status": device.status(),
-            "thresholds": {"freeze_index": preset["fi_threshold"], "band_power": preset["power_threshold"],
-                           "walking_power": DetectorParams().walk_loco_power},
+            "thresholds": {"freeze_index": params.fi_threshold, "band_power": params.power_threshold,
+                           "walking_power": params.walk_loco_power},
+            # The page starts over when these run behind what it has: the server was restarted.
+            "n_frames": device.n_frames,
+            "n_samples": device.n_samples,
             "frames": [f for f in list(device.recent_frames) if f["n"] > since_frame],
             "samples": [s for s in list(device.recent_samples) if s[0] > since_sample],
         }
@@ -820,13 +876,8 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
         """Replay-only. Must never exist on the board: it would show a cue the detector
         never produced, and nobody watching could tell the difference."""
         await device.start_cue("auto", freeze_index=3.4)
-
-        async def end():
-            await asyncio.sleep(device.settings["cue_min_seconds"])
-            if device.cue_active:
-                await device.stop_cue("finished")
-
-        asyncio.create_task(end())
+        # The detector knows nothing of this cue and would end it on its next frame: hold it, then let go.
+        device.hold_until = time.monotonic() + device.settings["cue_min_seconds"]
         return {"forced": True}
 
     if debug_routes:
@@ -837,6 +888,7 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
     async def live(socket: WebSocket):
         await socket.accept()
         device.clients.add(socket)
+        device.phone_connected()
         try:
             await socket.send_json(
                 {"type": "status", "device_time": iso(device.now()), **device.status()}
@@ -866,8 +918,12 @@ def start_on_board(cue_hook: Callable[[bool, int], None] | None = None, port: in
     source = LiveSource()
     device = Device(db=db, source=source, settings=settings, cue_hook=cue_hook,
                     cadence=CadenceTracker(initial_spm=load_cadence(db)))
-    config = uvicorn.Config(create_app(device, debug_routes=False), host="0.0.0.0", port=port, log_level="warning")
-    threading.Thread(target=uvicorn.Server(config).run, daemon=True, name="device-server").start()
+    # A phone that drops off the network says no goodbye. Pinging every 3 s notices within ~6 s, so its cue
+    # moves to the device's own output; the default (20 s + 20 s) leaves a cue playing to nobody.
+    config = uvicorn.Config(create_app(device, debug_routes=False), host="0.0.0.0", port=port, log_level="warning",
+                            ws_ping_interval=3, ws_ping_timeout=3)
+    source.server_thread = threading.Thread(target=uvicorn.Server(config).run, daemon=True, name="device-server")
+    source.server_thread.start()
     return source
 
 

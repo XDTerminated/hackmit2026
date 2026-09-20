@@ -19,13 +19,22 @@ import {
 export type Connection = 'connecting' | 'online' | 'offline';
 export type Device = ReturnType<typeof useDevice>;
 
-type Cue = { output: string; tempoBpm: number; trigger: string };
+type Cue = { eventId: number | null; output: string; tempoBpm: number; trigger: string };
 
-const toCue = (cue: LiveCue): Cue => ({ output: cue.output, tempoBpm: cue.tempo_bpm, trigger: cue.trigger });
+const toCue = (cue: LiveCue): Cue => ({
+  eventId: cue.event_id,
+  output: cue.output,
+  tempoBpm: cue.tempo_bpm,
+  trigger: cue.trigger,
+});
 const describe = (problem: unknown) => (problem instanceof Error ? problem.message : String(problem));
 
+// The device sends a status message at least every 5 s. A board that loses power or walks out of range
+// sends no goodbye, and the socket can take minutes to notice; silence this long means the link is gone.
+const SILENCE_LIMIT_MS = 12_000;
+
 // "10.0.0.5:8000", whatever was pasted: no scheme, no path.
-export const normaliseHost = (text: string) =>
+const normaliseHost = (text: string) =>
   text.trim().replace(/^[a-z]+:\/\//i, '').replace(/\/.*$/, '');
 
 export function useDevice() {
@@ -44,12 +53,27 @@ export function useDevice() {
   // late is dropped instead of overwriting the new device's state.
   const generation = useRef(0);
 
+  // The event the wearer pressed STOP on. A status message already on its way can still name it as
+  // playing; without this the phone would take the beat up again for a moment.
+  const stoppedEvent = useRef<number | null>(null);
+
   // Status carries the cue that is playing, so the STOP button and the phone beat also appear
   // when the app connects in the middle of one. A test cue never sets cue_active; leave it be.
   const applyStatus = useCallback((next: Status) => {
     setStatus(next);
-    setCue((current) => (next.cue ? toCue(next.cue) : current?.trigger === 'test' ? current : null));
+    const playing = next.cue && next.cue.event_id !== stoppedEvent.current ? next.cue : null;
+    setCue((current) => (playing ? toCue(playing) : current?.trigger === 'test' ? current : null));
   }, []);
+
+  const refreshSummary = useCallback(() => {
+    const mine = generation.current;
+    client
+      .getSummary()
+      .then((days) => {
+        if (generation.current === mine) setSummary(days);
+      })
+      .catch(() => {});
+  }, [client]);
 
   const refreshHistory = useCallback(async () => {
     const mine = generation.current;
@@ -84,18 +108,36 @@ export function useDevice() {
     let disposed = false;
     let socket: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
+    let lastHeard = Date.now();
 
-    // A different device: nothing on screen belongs to it yet.
+    // A different device: nothing on screen belongs to it yet, and it has not answered.
+    setConnection('connecting');
+    setError(null);
     setStatus(null);
     setSettings(null);
     setEvents([]);
     setSummary(null);
     setCue(null);
 
+    // The link is gone: by a close, or by silence. Only ever for the socket that is current.
+    const lost = (ws: WebSocket) => {
+      if (disposed || socket !== ws) return;
+      socket = null;
+      ws.close();
+      setConnection('offline');
+      setCue(null); // the device takes a phone cue over on its own output when the phone goes away
+      retry = setTimeout(connect, 2000);
+    };
+
+    // One socket at a time. A second one would never be closed, and the device would go on believing
+    // a phone is listening after this app has gone to the background.
     const connect = () => {
-      if (disposed || AppState.currentState === 'background') return;
+      if (retry) clearTimeout(retry);
+      retry = null;
+      if (disposed || socket || AppState.currentState === 'background') return;
       const ws = new WebSocket(client.wsUrl());
       socket = ws;
+      lastHeard = Date.now();
 
       // Every (re)connect re-reads everything: cues, settings and events may have changed while
       // the link was down.
@@ -105,6 +147,7 @@ export function useDevice() {
 
       ws.onmessage = (raw) => {
         if (disposed || socket !== ws) return;
+        lastHeard = Date.now();
         let message: LiveMessage;
         try {
           message = JSON.parse(raw.data as string);
@@ -114,31 +157,30 @@ export function useDevice() {
         if (message.type === 'status') {
           applyStatus(message);
         } else if (message.type === 'cue_started') {
-          setCue(toCue(message));
+          // "Test the cue" pressed during a real cue must not replace it, nor end it 2 s later.
+          setCue((current) => (current && current.trigger !== 'test' && message.trigger === 'test' ? current : toCue(message)));
         } else if (message.type === 'cue_stopped') {
-          setCue(null);
+          setCue((current) => (current && current.eventId === message.event_id ? null : current));
         } else if (message.type === 'event_created') {
           setEvents((current) => [message.event, ...current.filter((e) => e.id !== message.event.id)]);
-          client.getSummary().then(setSummary).catch(() => {});
+          refreshSummary();
         }
       };
 
       // React Native fires `error` and then `close` for a failed connection, so only `close`
       // schedules the retry; handling both doubles the retries on every round.
-      ws.onclose = () => {
-        if (disposed || socket !== ws) return;
-        socket = null;
-        setConnection('offline');
-        setCue(null); // the device takes a phone cue over on its buzzer when the phone goes away
-        retry = setTimeout(connect, 2000);
-      };
+      ws.onclose = () => lost(ws);
     };
+
+    const watchdog = setInterval(() => {
+      if (socket && Date.now() - lastHeard > SILENCE_LIMIT_MS) lost(socket);
+    }, 4000);
 
     // In the background the phone's timers stop, so it cannot keep a beat. Closing the socket
     // tells the device nobody is listening, and it plays the cue on its own buzzer instead.
     const appState = AppState.addEventListener('change', (next) => {
       if (next === 'active') {
-        if (!socket) connect();
+        connect();
       } else if (next === 'background') {
         if (retry) clearTimeout(retry);
         retry = null;
@@ -154,10 +196,11 @@ export function useDevice() {
     return () => {
       disposed = true;
       appState.remove();
+      clearInterval(watchdog);
       if (retry) clearTimeout(retry);
       socket?.close();
     };
-  }, [client, sync, applyStatus]);
+  }, [client, sync, applyStatus, refreshSummary]);
 
   // -- polling while the socket is down -----------------------------------
   // Covers a device that boots after the app: REST starts answering, then everything syncs.
@@ -187,7 +230,11 @@ export function useDevice() {
   // Returns the stopped event's id, or null when nothing was playing.
   const stopCue = useCallback(
     async (feedback?: Feedback) => {
-      setCue(null); // silence the phone first: it must stop even if the device cannot be reached
+      // Silence the phone first: it must stop even if the device cannot be reached.
+      setCue((current) => {
+        if (current?.eventId != null) stoppedEvent.current = current.eventId;
+        return null;
+      });
       const result = await attempt(() => client.stopCue(feedback));
       if (!result?.stopped) return null;
       refreshHistory().catch(() => {});
@@ -196,14 +243,16 @@ export function useDevice() {
     [client, attempt, refreshHistory],
   );
 
+  // True when the device recorded the verdict.
   const setFeedback = useCallback(
     async (id: number, feedback: Feedback | null) => {
       const updated = await attempt(() => client.setFeedback(id, feedback));
-      if (!updated) return;
+      if (!updated) return false;
       setEvents((current) => current.map((e) => (e.id === id ? updated : e)));
-      client.getSummary().then(setSummary).catch(() => {});
+      refreshSummary();
+      return true;
     },
-    [client, attempt],
+    [client, attempt, refreshSummary],
   );
 
   const updateSettings = useCallback(

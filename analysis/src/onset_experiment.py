@@ -21,9 +21,11 @@ import numpy as np
 import pandas as pd
 
 from baseline_fi import SAMPLE_RATE_HZ, clean_dir, event_metrics, window_features
-from evaluate_own import HOLD_TAIL_S, RAW_DIR, bouts
+from evaluate_own import RAW_DIR, score_cues
+from streaming_detector import DetectorParams
 
-FI_TH, POWER_TH, STOP_RATIO, WALK_LOCO = 1.056, 178.0, 0.6, 10_000
+P = DetectorParams()
+FI_TH, POWER_TH, STOP_RATIO, WALK_LOCO = P.fi_threshold, P.power_threshold, P.stop_veto_ratio, P.walk_loco_power
 WIN = 4 * SAMPLE_RATE_HZ
 GATE_S, GATE_MIN_WALK_S, HOLD_S = 5, 1, 5
 
@@ -43,6 +45,7 @@ def features(magnitude, step, fast_power):
 
 
 def cue_logic(f, step, debounce_s, fast_th=None, fast_debounce_s=0.0):
+    # Durations are frames x frame period: the balanced preset's 2 frames at 0.5 s are debounce_s = 1.0.
     frames = lambda seconds: max(1, round(seconds * SAMPLE_RATE_HZ / step))
     debounce, fast_debounce = frames(debounce_s), frames(fast_debounce_s)
     lookback, min_walk, hold = frames(GATE_S), frames(GATE_MIN_WALK_S), frames(HOLD_S)
@@ -56,7 +59,7 @@ def cue_logic(f, step, debounce_s, fast_th=None, fast_debounce_s=0.0):
         armed = sum(history) >= min_walk
         if cue_on:
             cue_on = f["slow"][i] or fast[i] or i < hold_end
-        if not cue_on and armed and (run_slow >= debounce or run_fast >= fast_debounce > 0 and fast[i]):
+        if not cue_on and armed and (run_slow >= debounce or run_fast >= fast_debounce):
             cue_on, hold_end = True, i + hold
         cue[i] = cue_on
         history.append(f["walking"][i])
@@ -71,18 +74,10 @@ def score_own(step, fast_power, **logic):
         data = pd.read_csv(path)
         labels = data["label"].fillna("").to_numpy()
         f = features(np.linalg.norm(data[["ax_mg", "ay_mg", "az_mg"]].to_numpy(), axis=1), step, fast_power)
-        cue, index = cue_logic(f, step, **logic), f["end_idx"]
-        freezes = [(a, b) for name, a, b in bouts(labels) if name == "freezing"]
-        for a, b in freezes:
-            n += 1
-            hits = index[cue & (index >= a) & (index < b)]
-            if len(hits):
-                latencies.append((hits[0] - a) / SAMPLE_RATE_HZ)
-        starts = index[cue & ~np.concatenate([[False], cue[:-1]])]
-        false_cues += sum(labels[s] != "freezing" and not any(0 <= s - b < HOLD_TAIL_S * SAMPLE_RATE_HZ for _, b in freezes)
-                          for s in starts)
-    return {"own caught": f"{len(latencies)}/{n}", "own median s": round(float(np.median(latencies)), 2),
-            "own worst s": round(max(latencies), 1), "own false": false_cues}
+        n_freezes, caught, false = score_cues(labels, f["end_idx"], cue_logic(f, step, **logic), SAMPLE_RATE_HZ)
+        n, latencies, false_cues = n + n_freezes, latencies + caught, false_cues + len(false)
+    return {"own caught": f"{len(latencies)}/{n}", "own median s": round(float(np.median(latencies)), 2) if latencies else None,
+            "own worst s": round(max(latencies), 1) if latencies else None, "own false": false_cues}
 
 
 _patients = {}
@@ -95,7 +90,7 @@ def score_patients(dataset, step, fast_power, **logic):
         key = (path, step, fast_power)
         if key not in _patients:
             _patients[key] = [(seg["freeze"].to_numpy().astype(bool), features(seg["acc_mag"].to_numpy(), step, fast_power))
-                              for _, seg in pd.read_csv(path).groupby("segment") if len(seg) >= WIN]
+                              for _, seg in pd.read_csv(path).groupby("segment")]
         segments = [dict(end_idx=f["end_idx"], freeze=freeze) for freeze, f in _patients[key]]
         cues = [cue_logic(f, step, **logic) for _, f in _patients[key]]
         n, d, _, lat, fa = event_metrics(segments, cues)

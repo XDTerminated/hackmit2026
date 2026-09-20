@@ -22,7 +22,8 @@ Feed the rows in order into a freshly reset detector.
 | `loco_power` | locomotion band power, mg² |
 | `positive` | raw detector decision for this window |
 | `armed` | walking gate state used for this frame |
-| `cue_on` | buzzer state. **This is the column that must match.** |
+| `cue_on` | cue state. **This is the column that must match.** |
+| `stopping` | the stop rule rejected this window (step 7 below): band power below 0.6 x the previous frame's |
 | `label_freeze` | clinician's label at that sample. For information only, the detector never sees it |
 
 | scenario | what it checks |
@@ -60,7 +61,7 @@ Feed the rows in order into a freshly reset detector.
 consecutive = positive ? consecutive + 1 : 0
 armed = (number of true flags in walk_history) >= 2       // uses the history BEFORE this frame is added
 if (cue_on)  cue_on = positive || i < hold_end            // the gate does not apply to a cue that is already playing
-if (!cue_on && positive && armed && consecutive >= 2) { cue_on = true; hold_end = i + 10; }   // 2 = balanced, 1 = fast
+if (!cue_on && positive && armed && consecutive >= 2) { cue_on = true; hold_end = i + 10; }   // 2 = the balanced preset, 1 = catch_more
 walk_history[walk_head] = loco > 10000;  walk_head = (walk_head + 1) % 10
 i++
 ```

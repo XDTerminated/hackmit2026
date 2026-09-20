@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
-import { Button, Card, Label } from '../components/ui';
+import { Button, Card, Label, Notice } from '../components/ui';
 import { Theme } from '../theme';
 import { Device } from '../useDevice';
 
@@ -38,8 +38,8 @@ export function NowScreen({ theme, device }: { theme: Theme; device: Device }) {
 
   const onUndo = async () => {
     if (undoId == null) return;
-    await device.setFeedback(undoId, 'real');
-    setUndoId(null);
+    // Keep the offer on screen if the device did not take it; the error line says why.
+    if (await device.setFeedback(undoId, 'real')) setUndoId(null);
   };
 
   const paused = status?.paused_until ? new Date(status.paused_until) > new Date() : false;
@@ -107,34 +107,30 @@ export function NowScreen({ theme, device }: { theme: Theme; device: Device }) {
       ) : null}
 
       {status && !status.sensor_ok ? (
-        <Card theme={theme} style={{ borderColor: theme.c.accent }}>
-          <Label theme={theme}>Sensor not responding</Label>
-          <Text style={{ ...theme.font.body, color: theme.c.text, marginTop: 4 }}>
-            The device is not getting movement data, so it cannot detect a freeze. Check the sensor's
-            wires and strap.
-          </Text>
-        </Card>
+        <Notice
+          theme={theme}
+          urgent
+          title="Sensor not responding"
+          text="The device is not getting movement data, so it cannot detect a freeze. Check the sensor's wires and strap."
+        />
       ) : null}
 
       {settings && !settings.detection_enabled ? (
-        <Card theme={theme}>
-          <Label theme={theme}>Detection is off</Label>
-          <Text style={{ ...theme.font.body, color: theme.c.text, marginTop: 4 }}>
-            The device will not start a cue by itself. Turn detection on in Settings.
-          </Text>
-        </Card>
+        <Notice
+          theme={theme}
+          title="Detection is off"
+          text="The device will not start a cue by itself. Turn detection on in Settings."
+        />
       ) : null}
 
       {paused ? (
-        <Card theme={theme}>
-          <Label theme={theme}>Paused</Label>
-          <Text style={{ ...theme.font.body, color: theme.c.text, marginTop: 4 }}>
-            Detection is off until {new Date(status!.paused_until!).toLocaleTimeString()}.
-          </Text>
-          <View style={{ marginTop: theme.space(1.5) }}>
-            <Button theme={theme} title="Resume now" onPress={device.resume} />
-          </View>
-        </Card>
+        <Notice
+          theme={theme}
+          title="Paused"
+          text={`Detection is off until ${new Date(status!.paused_until!).toLocaleTimeString()}.`}
+        >
+          <Button theme={theme} title="Resume now" onPress={device.resume} />
+        </Notice>
       ) : null}
 
       <Card theme={theme}>
@@ -148,7 +144,7 @@ export function NowScreen({ theme, device }: { theme: Theme; device: Device }) {
         </Text>
         {settings?.tempo_auto && status?.cadence_spm ? (
           <Text style={{ ...theme.font.label, color: theme.c.muted, marginTop: 4 }}>
-            Your walking pace: {status.cadence_spm} steps a minute. Cues play at that pace.
+            Your walking pace: {status.cadence_spm} steps a minute. Cues play at {status.cue_tempo_bpm ?? status.cadence_spm}.
           </Text>
         ) : null}
         {status && Math.abs(status.sample_rate_hz - 64) > 1 ? (

@@ -27,9 +27,10 @@ from scipy.ndimage import uniform_filter1d
 from baseline_fi import (FI_GRID, POWER_GRID, SAMPLE_RATE_HZ, STEP_S, clean_dir, grid_counts, label_windows,
                          loso_cell, summary_row, window_features)
 from simulate_device import CueConfig, simulate_subject
+from streaming_detector import DetectorParams
 
 WIN, STEP = 4 * SAMPLE_RATE_HZ, int(STEP_S * SAMPLE_RATE_HZ)
-FROZEN_THRESHOLDS = (1.056, 178.0)   # tuned on Daphnet only
+FROZEN_THRESHOLDS = (DetectorParams().fi_threshold, DetectorParams().power_threshold)   # tuned on Daphnet only
 CUE = CueConfig("gate 5s + hold 5s + debounce 2", debounce=2, gate_lookback_s=5, hold_s=5)
 RAW = CueConfig("raw detector")
 GRAVITY_SMOOTH_S = 2.0

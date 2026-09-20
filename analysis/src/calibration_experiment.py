@@ -111,17 +111,15 @@ def main():
             personal = (FI_GRID[i], POWER_GRID[j])
         results["personal"][s] = score(test[s], *personal, args.debounce)
 
-    hours = {s: sum(len(seg["freeze"]) for seg in test[s]) / SAMPLE_RATE_HZ / 3600 for s in subjects}
     rows = []
     for s in subjects + ["POOLED"]:
         row = {"subject": s}
         for m in METHODS:
             picked = [results[m][x] for x in (subjects if s == "POOLED" else [s])]
             tp, fn, fp, tn = sum(r["tol"] for r in picked)
-            h = sum(hours.values()) if s == "POOLED" else hours[s]
             row[f"sens_{m[:4]}"] = rate(tp, tp + fn)
             row[f"spec_{m[:4]}"] = rate(tn, tn + fp)
-            row[f"fa/h_{m[:4]}"] = sum(r["fa"] for r in picked) / h
+            row[f"fa/h_{m[:4]}"] = sum(r["fa"] for r in picked) / sum(r["hours"] for r in picked)
             row[f"ep_{m[:4]}"] = f"{sum(r['detected'] for r in picked)}/{sum(r['episodes'] for r in picked)}"
         rows.append(row)
 

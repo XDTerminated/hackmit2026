@@ -233,12 +233,13 @@ function drawHeadline() {
   const last = frames[frames.length - 1];
   const banner = el("banner");
   let title = "Still", why = "No walking right now.";
-  if (!status || !status.sensor_ok) { title = "No sensor data"; why = "The device is not receiving samples."; }
+  if (!status) { title = "No contact"; why = "This page cannot reach the device."; }
+  else if (!status.sensor_ok) { title = "No sensor data"; why = "The device is not receiving samples."; }
   else if (status.cue_active) {
     const tempo = status.cue ? status.cue.tempo_bpm : status.cue_tempo_bpm;
     title = status.cue && status.cue.trigger === "manual" ? "Beat requested" : "Freeze detected";
-    why = `Cue playing at ${tempo} beats a minute` + (status.cadence_spm ? ", the wearer's own walking pace." : ".");
-  } else if (last && last.stopping) { title = "Stopping"; why = "Movement is dying away: a normal stop, not a freeze. No cue."; }
+    why = `Cue playing at ${tempo} beats a minute` + (tempo === status.cadence_spm ? ", the wearer's own walking pace." : ".");
+  } else if (last && last.stopping && thresholds && last.loco_power + last.freeze_power > thresholds.band_power) { title = "Stopping"; why = "Movement is dying away: a normal stop, not a freeze. No cue."; }
   else if (status.state === "walking") { title = "Walking"; why = "Strong slow rhythm, little tremble. Watching for a freeze."; }
   banner.classList.toggle("cue", !!(status && status.cue_active));
   el("state").textContent = title;
@@ -279,18 +280,22 @@ el("bands").addEventListener("mouseleave", () => { el("tip").style.display = "no
 
 async function poll() {
   try {
-    const response = await fetch(`/api/v1/frames?since_frame=${lastFrame}&since_sample=${lastSample}`, { cache: "no-store" });
+    // A rebooting board over Wi-Fi does not refuse the request, it hangs: give up after 3 s and try again.
+    const response = await fetch(`/api/v1/frames?since_frame=${lastFrame}&since_sample=${lastSample}`,
+                                 { cache: "no-store", signal: AbortSignal.timeout(3000) });
     const data = await response.json();
     status = data.status; thresholds = data.thresholds;
-    // The counters restart with the server: start over rather than wait for them to catch up.
-    const restarted = data.frames.length === 0 && data.samples.length === 0 && status.uptime_s < 10 && lastSample > SAMPLE_HZ * 15;
-    if (restarted) { samples = []; frames = []; lastSample = lastFrame = 0; }
+    // A restarted server counts from zero again: start over rather than wait for it to catch up.
+    if (data.n_samples < lastSample || data.n_frames < lastFrame) { samples = []; frames = []; lastSample = lastFrame = 0; }
     if (data.samples.length) { samples = samples.concat(data.samples).slice(-MOTION_S * SAMPLE_HZ); lastSample = samples[samples.length - 1][0]; }
     if (data.frames.length) { readDecisions(data.frames); lastFrame = frames[frames.length - 1].n; }
     el("offline").textContent = "";
     drawMotion(); drawBands(); drawMeter(); drawHeadline();
   } catch (problem) {
+    // Say so where it cannot be missed: a banner frozen on "Freeze detected" would be a lie.
     el("offline").textContent = "Lost contact with the device. Retrying…";
+    status = null;
+    drawHeadline();
   }
   setTimeout(poll, 250);
 }

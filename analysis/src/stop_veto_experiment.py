@@ -24,20 +24,23 @@ Usage: python src/stop_veto_experiment.py
 import numpy as np
 import pandas as pd
 
-from baseline_fi import clean_dir, label_windows, score_subject, summary_row, window_features
-from evaluate_own import HOLD_TAIL_S, RAW_DIR, bouts
-from simulate_device import CueConfig, cue_logic, stop_veto
+from baseline_fi import clean_dir, load_subject, summary_row, window_features
+from evaluate_own import RAW_DIR, score_cues
+from simulate_device import CueConfig, cue_logic, simulate_subject, stop_veto
+from streaming_detector import DetectorParams
 
-WIN, STEP, RAMP, RATE = 256, 32, 1, 64
+P = DetectorParams()
+WIN, STEP, RAMP, RATE = P.window, P.step, P.ramp_power, P.sample_rate_hz
+FI, POWER = P.fi_threshold, P.power_threshold   # the detector's thresholds; the candidates move one thing each
 CUE = CueConfig("gate 5s + hold 5s + debounce 2", debounce=2, gate_lookback_s=5, hold_s=5)
 CANDIDATES = [  # (name, freeze-index threshold, power threshold, veto ratio)
-    ("current detector", 1.056, 178.0, None),
-    ("freeze index > 1.5", 1.5, 178.0, None),
-    ("freeze index > 1.75", 1.75, 178.0, None),
-    ("power > 2000", 1.056, 2000.0, None),
-    ("stop veto 0.5", 1.056, 178.0, 0.5),
-    ("stop veto 0.6", 1.056, 178.0, 0.6),
-    ("stop veto 0.7", 1.056, 178.0, 0.7),
+    ("no stop rule (v2)", FI, POWER, None),
+    ("freeze index > 1.5", 1.5, POWER, None),
+    ("freeze index > 1.75", 1.75, POWER, None),
+    ("power > 2000", FI, 2000.0, None),
+    ("stop veto 0.5", FI, POWER, 0.5),
+    ("stop veto 0.6 (adopted, v3)", FI, POWER, 0.6),
+    ("stop veto 0.7", FI, POWER, 0.7),
 ]
 
 
@@ -52,32 +55,25 @@ def own_scores(fi_th, power_th, ratio):
         data = pd.read_csv(path)
         labels = data["label"].fillna("").to_numpy()
         cue, idx = cues_for(np.linalg.norm(data[["ax_mg", "ay_mg", "az_mg"]].to_numpy(), axis=1), fi_th, power_th, ratio)
-        freezes = [(a, b) for name, a, b in bouts(labels) if name == "freezing"]
-        hits = [idx[cue & (idx >= a) & (idx < b)] for a, b in freezes]
-        latencies = [(h[0] - a) / RATE for h, (a, _) in zip(hits, freezes) if len(h)]
-        starts = idx[cue & ~np.concatenate([[False], cue[:-1]])]
-        false = [s for s in starts if labels[s] != "freezing"
-                 and not any(0 <= s - end < HOLD_TAIL_S * RATE for _, end in freezes)]
-        cells.append(f"{len(latencies)}/{len(freezes)}, {np.median(latencies):.1f} s (max {max(latencies):.1f}), false {len(false)}")
+        n_freezes, latencies, false = score_cues(labels, idx, cue, RATE)
+        timing = f"{np.median(latencies):.1f} s (max {max(latencies):.1f})" if latencies else "none caught"
+        cells.append(f"{len(latencies)}/{n_freezes}, {timing}, false {len(false)}")
     return cells
 
 
+_patients = {}   # dataset -> every subject's windowed segments; the candidates only differ in thresholds
+
+
 def patient_scores(dataset, fi_th, power_th, ratio):
-    results = []
-    for path in sorted(clean_dir(dataset).glob("*.csv")):
-        segments, cues = [], []
-        for _, seg in pd.read_csv(path).groupby("segment"):
-            freeze = seg["freeze"].to_numpy().astype(bool)
-            cue, idx = cues_for(seg["acc_mag"].to_numpy(), fi_th, power_th, ratio)
-            segments.append(dict(end_idx=idx, freeze=freeze, **label_windows(freeze, idx)))
-            cues.append(cue)
-        results.append(score_subject(segments, cues))
-    row = summary_row(results)
+    if dataset not in _patients:
+        _patients[dataset] = [load_subject(path, WIN, STEP, RAMP) for path in sorted(clean_dir(dataset).glob("*.csv"))]
+    row = summary_row([simulate_subject(segments, fi_th, power_th, CUE, [stop_veto(seg["power"], ratio) for seg in segments])
+                       for segments in _patients[dataset]])
     return f"{row['episodes']}, {row['latency_s']:.1f} s, {row['false_cues/h']:.0f}/h"
 
 
 def main():
-    names = [p.stem.split("_", 2)[2] for p in sorted(RAW_DIR.glob("*.csv"))]
+    names = [p.stem.split("_", 2)[-1] for p in sorted(RAW_DIR.glob("*.csv"))]   # date_time_name.csv -> name
     rows = []
     for name, fi_th, power_th, ratio in CANDIDATES:
         row = {"detector": name}

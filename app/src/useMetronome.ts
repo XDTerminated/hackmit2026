@@ -72,6 +72,9 @@ export function useMetronome(active: boolean, bpm: number, channels: CueChannels
     const tick = () => {
       beat();
       next += period;
+      // After a stall (the app briefly inactive, a slow render) skip the missed beats; do not fire them all at once.
+      const now = performance.now();
+      while (next <= now) next += period;
       timer = setTimeout(tick, Math.max(0, next - performance.now()));
     };
     tick(); // the first beat lands immediately, not one interval late
