@@ -24,9 +24,9 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import uniform_filter1d
 
-from baseline_fi import (FI_GRID, POWER_GRID, SAMPLE_RATE_HZ, STEP_S, best_cell, clean_dir, grid_counts,
-                         label_windows, window_features)
-from simulate_device import CueConfig, pooled_row, simulate_subject
+from baseline_fi import (FI_GRID, POWER_GRID, SAMPLE_RATE_HZ, STEP_S, clean_dir, grid_counts, label_windows,
+                         loso_cell, summary_row, window_features)
+from simulate_device import CueConfig, simulate_subject
 
 WIN, STEP = 4 * SAMPLE_RATE_HZ, int(STEP_S * SAMPLE_RATE_HZ)
 FROZEN_THRESHOLDS = (1.056, 178.0)   # tuned on Daphnet only
@@ -98,7 +98,8 @@ def main():
         for limit in YAW_LIMITS_DPS:
             vetoes = {s: [seg["yaw"] > limit for seg in data[s]] if limit else None for s in subjects}
             name = f"{cfg.name}, " + (f"veto yaw > {limit} dps" if limit else "no veto")
-            rows.append(pooled_row(name, [simulate_subject(data[s], *FROZEN_THRESHOLDS, cfg, vetoes[s]) for s in subjects]))
+            rows.append(summary_row([simulate_subject(data[s], *FROZEN_THRESHOLDS, cfg, vetoes[s]) for s in subjects],
+                                    **{"cue logic": name}))
     show(rows)
 
     print("\n2. Accel vs gyro freeze index, thresholds tuned leave-one-subject-out within Mendeley")
@@ -112,11 +113,9 @@ def main():
         counts = {s: grid_counts(view[s], 1, FI_GRID, power_grid) for s in subjects}
         results = []
         for held_out in subjects:
-            pos = sum(counts[s][0] for s in subjects if s != held_out)
-            n = sum(counts[s][1] for s in subjects if s != held_out)
-            i, j = best_cell(pos, n)
+            i, j = loso_cell(counts, held_out)
             results.append(simulate_subject(view[held_out], FI_GRID[i], power_grid[j], RAW))
-        rows.append(pooled_row(f"{label}, raw detector", results))
+        rows.append(summary_row(results, **{"cue logic": f"{label}, raw detector"}))
     show(rows)
 
 

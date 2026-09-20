@@ -20,7 +20,8 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GroupKFold
 
-from baseline_fi import CLEAN_DIR, SAMPLE_RATE_HZ, STEP_S, counts, event_metrics, label_windows, rate
+from baseline_fi import (SAMPLE_RATE_HZ, STEP_S, clean_dir, counts, debounced, label_windows, score_subject,
+                         summary_row)
 
 BANDS_HZ = [(0.5, 1.5), (1.5, 3), (3, 5), (5, 8), (8, 12), (12, 20)]
 LAGS_FRAMES = [4, 8]  # 2 s and 4 s earlier
@@ -87,14 +88,6 @@ def load_subject(path, win, step, per_axis):
     return segments
 
 
-def debounced(pred, debounce):
-    out = pred.copy()
-    for lag in range(1, debounce):
-        out[lag:] &= pred[:-lag]
-        out[:lag] = False
-    return out
-
-
 def stack(segments, key, stride=1):
     parts = [s[key][::stride] for s in segments]
     return pd.concat(parts, ignore_index=True) if key == "X" else np.concatenate(parts)
@@ -143,49 +136,22 @@ def main():
     args = parser.parse_args()
 
     win, step = int(args.window * SAMPLE_RATE_HZ), int(STEP_S * SAMPLE_RATE_HZ)
-    files = sorted(CLEAN_DIR.glob("S*.csv"))
+    files = sorted(clean_dir("daphnet").glob("*.csv"))
     if not files:
-        raise SystemExit(f"No cleaned data in {CLEAN_DIR}; run clean_daphnet.py first")
+        raise SystemExit("No cleaned Daphnet data; run clean_daphnet.py first")
     data = {f.stem: load_subject(f, win, step, args.per_axis) for f in files}
     subjects = list(data)
 
-    rows, all_latencies = [], []
-    totals = dict(strict=np.zeros(4), tol=np.zeros(4), episodes=0, detected=0, pre_on=0, fa=0, hours=0.0)
-    importances = []
-    for held_out in subjects:
+    rows, results, importances = [], [], []
+    for held_out, segments in data.items():
         forest, threshold = fit_fold(data, [s for s in subjects if s != held_out], args.min_spec)
         importances.append(forest.feature_importances_)
-
-        segments = data[held_out]
         preds = [debounced(forest.predict_proba(s["X"])[:, 1] > threshold, args.debounce) for s in segments]
-        pred = np.concatenate(preds)
-        y, on_zone, off_zone = (stack(segments, k) for k in ("y", "on_zone", "off_zone"))
-        strict, tol = counts(y, on_zone, off_zone, pred, False), counts(y, on_zone, off_zone, pred, True)
-        n_ep, n_det, n_pre, latencies, n_fa = event_metrics(segments, preds)
-        hours = sum(len(s["freeze"]) for s in segments) / SAMPLE_RATE_HZ / 3600
-
-        totals["strict"] += strict
-        totals["tol"] += tol
-        for key, value in (("episodes", n_ep), ("detected", n_det), ("pre_on", n_pre), ("fa", n_fa), ("hours", hours)):
-            totals[key] += value
-        all_latencies += latencies
-        rows.append(dict(
-            subject=held_out, prob_th=threshold,
-            sens=rate(strict[0], strict[0] + strict[1]), spec=rate(strict[3], strict[2] + strict[3]),
-            sens_tol=rate(tol[0], tol[0] + tol[1]), spec_tol=rate(tol[3], tol[2] + tol[3]),
-            episodes=f"{n_det}/{n_ep}", pre_on=n_pre,
-            latency_s=np.median(latencies) if latencies else float("nan"), fa_per_h=n_fa / hours,
-        ))
+        result = score_subject(segments, preds)
+        results.append(result)
+        rows.append(summary_row([result], subject=held_out, prob_th=threshold))
         print(f"  fold {held_out} done", flush=True)
-
-    st, tl = totals["strict"], totals["tol"]
-    rows.append(dict(
-        subject="POOLED", prob_th=float("nan"),
-        sens=rate(st[0], st[0] + st[1]), spec=rate(st[3], st[2] + st[3]),
-        sens_tol=rate(tl[0], tl[0] + tl[1]), spec_tol=rate(tl[3], tl[2] + tl[3]),
-        episodes=f"{totals['detected']}/{totals['episodes']}", pre_on=totals["pre_on"],
-        latency_s=np.median(all_latencies), fa_per_h=totals["fa"] / totals["hours"],
-    ))
+    rows.append(summary_row(results, subject="POOLED", prob_th=float("nan")))
 
     pd.set_option("display.width", 200)
     print(f"\n=== random forest, window {args.window:g} s, step {STEP_S:g} s, debounce {args.debounce}, "

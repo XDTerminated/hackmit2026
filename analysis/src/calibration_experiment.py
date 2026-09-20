@@ -20,8 +20,8 @@ import argparse
 import numpy as np
 import pandas as pd
 
-from baseline_fi import (CLEAN_DIR, FI_GRID, POWER_GRID, SAMPLE_RATE_HZ, STEP_S, best_cell, confusion, detect,
-                         event_metrics, grid_counts, load_subject, rate)
+from baseline_fi import (FI_GRID, POWER_GRID, SAMPLE_RATE_HZ, STEP_S, best_cell, clean_dir, detect, grid_counts,
+                         load_subject, loso_cell, rate, score_subject)
 
 WALK_POWER_MG2 = 178  # windows above this count as walking when computing the user's reference
 NORM_POWER_GRID = np.concatenate([[0], np.round(np.logspace(-3, 1, 33), 4)])
@@ -63,14 +63,8 @@ def walking_reference(cal):
     return np.median(fi[walking]), np.median(power[walking])
 
 
-def score(segments, fi_th, power_th, debounce, fi_grid, power_grid):
-    """Tolerant/strict confusion counts and event metrics at fixed thresholds."""
-    pos, n = grid_counts(segments, debounce, fi_grid, power_grid)
-    i, j = np.flatnonzero(fi_grid == fi_th)[0], np.flatnonzero(power_grid == power_th)[0]
-    tol = np.array([c[i, j] for c in confusion(pos, n, tolerant=True)])
-    n_ep, n_det, _, _, n_fa = event_metrics(
-        segments, [detect(s["fi"], s["power"], fi_th, power_th, debounce) for s in segments])
-    return dict(tol=tol, episodes=n_ep, detected=n_det, fa=n_fa)
+def score(segments, fi_th, power_th, debounce):
+    return score_subject(segments, [detect(s["fi"], s["power"], fi_th, power_th, debounce) for s in segments])
 
 
 def main():
@@ -83,9 +77,9 @@ def main():
 
     win, step = int(args.window * SAMPLE_RATE_HZ), int(STEP_S * SAMPLE_RATE_HZ)
     n_cal = int(args.cal_min * 60 / STEP_S)
-    files = sorted(CLEAN_DIR.glob("S*.csv"))
+    files = sorted(clean_dir("daphnet").glob("*.csv"))
     if not files:
-        raise SystemExit(f"No cleaned data in {CLEAN_DIR}; run clean_daphnet.py first")
+        raise SystemExit("No cleaned Daphnet data; run clean_daphnet.py first")
 
     subjects, full, full_norm, cal, test, test_norm = [], {}, {}, {}, {}, {}
     for f in files:
@@ -100,24 +94,22 @@ def main():
     counts_norm = {s: grid_counts(full_norm[s], args.debounce, FI_GRID, NORM_POWER_GRID) for s in subjects}
 
     def loso_thresholds(counts, held_out, power_grid):
-        pos = sum(counts[s][0] for s in subjects if s != held_out)
-        n = sum(counts[s][1] for s in subjects if s != held_out)
-        i, j = best_cell(pos, n, args.min_spec)
+        i, j = loso_cell(counts, held_out, args.min_spec)
         return FI_GRID[i], power_grid[j]
 
     results = {m: {} for m in METHODS}
     for s in subjects:
         glob = loso_thresholds(counts, s, POWER_GRID)
-        results["global"][s] = score(test[s], *glob, args.debounce, FI_GRID, POWER_GRID)
+        results["global"][s] = score(test[s], *glob, args.debounce)
 
         norm = loso_thresholds(counts_norm, s, NORM_POWER_GRID)
-        results["normalized"][s] = score(test_norm[s], *norm, args.debounce, FI_GRID, NORM_POWER_GRID)
+        results["normalized"][s] = score(test_norm[s], *norm, args.debounce)
 
         personal = glob
         if any(seg["y"].any() for seg in cal[s]):
             i, j = best_cell(*grid_counts(cal[s], args.debounce), args.min_spec)
             personal = (FI_GRID[i], POWER_GRID[j])
-        results["personal"][s] = score(test[s], *personal, args.debounce, FI_GRID, POWER_GRID)
+        results["personal"][s] = score(test[s], *personal, args.debounce)
 
     hours = {s: sum(len(seg["freeze"]) for seg in test[s]) / SAMPLE_RATE_HZ / 3600 for s in subjects}
     rows = []

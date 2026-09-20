@@ -97,9 +97,6 @@ table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-nu
 th, td { text-align: left; padding: 5px 10px 5px 0; border-bottom: 1px solid var(--grid); }
 th { color: var(--text-secondary); font-weight: 500; position: sticky; top: 0; background: var(--surface-1); }
 
-.card.response { padding: 10px 16px; }
-.card.response .row { margin-bottom: 0; }
-.row-label { font-weight: 600; margin-right: 4px; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
 input[type="text"] {
   font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--axis);

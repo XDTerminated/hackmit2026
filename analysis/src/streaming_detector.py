@@ -9,14 +9,16 @@ a handful of scalar state variables. No look-ahead, no growing memory.
     frame = detector.push(ax_mg, ay_mg, az_mg)   # None, or a Frame every 0.5 s
 
 Commands:
-  python src/streaming_detector.py --verify   check it reproduces the batch code on all
-                                          of Daphnet, and what float32 changes
-  python src/streaming_detector.py --export   write test vectors to test_vectors/
-  (no flag: both)
+  python src/streaming_detector.py --verify          check it reproduces the batch code on all
+                                                     of Daphnet, and what float32 changes
+  python src/streaming_detector.py --export          write test vectors to test_vectors/
+  python src/streaming_detector.py --check-vectors   check it still reproduces test_vectors/
+  (no flag: --verify then --export)
 """
 
 import argparse
 import math
+from collections import deque
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -68,6 +70,36 @@ class Frame:
     positive: bool         # raw detector output for this window
     armed: bool            # walking gate state when this frame was evaluated
     cue_on: bool           # what the buzzer does
+
+
+class SampleClock:
+    """Timing of the incoming sample stream, from the STM32's micros() timestamps.
+
+    rate_hz is the number of samples delivered per second of device time over the last ~10 s
+    (None until a second of data has arrived). Averaging 1/dt per sample instead reads high
+    whenever there is timing jitter. lost counts sampling slots that produced no sample.
+    """
+
+    def __init__(self, nominal_hz=64, window_s=10):
+        self.period_us = 1_000_000 / nominal_hz
+        self.rate_hz = None
+        self.lost = 0
+        self._min_samples = nominal_hz
+        self._last_t_us = None
+        self._elapsed_us = 0
+        self._recent = deque(maxlen=nominal_hz * window_s + 1)
+
+    def tick(self, t_us):
+        t_us = int(t_us)
+        if self._last_t_us is not None:
+            dt = (t_us - self._last_t_us) % 2**32   # micros() wraps every ~71 minutes
+            self.lost += max(round(dt / self.period_us) - 1, 0)
+            self._elapsed_us += dt
+            self._recent.append(self._elapsed_us)
+            span = self._recent[-1] - self._recent[0]
+            if len(self._recent) > self._min_samples and span:
+                self.rate_hz = (len(self._recent) - 1) * 1_000_000 / span
+        self._last_t_us = t_us
 
 
 class StreamingDetector:
@@ -276,11 +308,30 @@ def export():
     print(f"\nWrote test vectors to {VECTOR_DIR}")
 
 
+def check_vectors():
+    """Replay every test vector and compare with its expected file, as the C port will have to."""
+    ok = True
+    for expected_path in sorted(VECTOR_DIR.glob("*_expected.csv")):
+        expected = pd.read_csv(expected_path)
+        axes = pd.read_csv(str(expected_path).replace("_expected", "_input")).to_numpy()
+        got = run(StreamingDetector(), axes=axes)
+        same = len(got) == len(expected) and all(
+            (got[c].astype(int) == expected[c]).all() for c in ("positive", "armed", "cue_on")
+        ) and np.allclose(got["freeze_index"], expected["freeze_index"], rtol=1e-4)
+        print(f"  {expected_path.name}: {len(got)} frames {'match' if same else 'DIFFER'}")
+        ok &= same
+    print("CHECK " + ("PASSED" if ok else "FAILED: the detector no longer matches test_vectors/ (re-export if intended)"))
+    return ok
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--export", action="store_true")
+    parser.add_argument("--check-vectors", action="store_true")
     args = parser.parse_args()
+    if args.check_vectors:
+        raise SystemExit(0 if check_vectors() else 1)
     if not CLEAN_DIR.exists():
         raise SystemExit(f"No cleaned data in {CLEAN_DIR}; run clean_daphnet.py first")
     both = not (args.verify or args.export)

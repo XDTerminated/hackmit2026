@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 from scipy.signal import resample
 
-from baseline_fi import SAMPLE_RATE_HZ, STEP_S, clean_dir, event_metrics, label_windows, window_features
+from baseline_fi import SAMPLE_RATE_HZ, STEP_S, clean_dir, label_windows, score_subject, window_features
 from simulate_device import CueConfig, cue_logic
 
 FI_TH, POWER_TH = 1.056, 178.0
@@ -36,24 +36,20 @@ CANDIDATES = [("rect 4 s (current)", 4, 0), ("rect 3 s", 3, 0), ("rect 2 s", 2, 
               ("ramp 4 s", 4, 1), ("ramp 3 s", 3, 1), ("ramp^2 4 s", 4, 2), ("ramp^2 3 s", 3, 2)]
 
 
-def weighted_features(signal, win_s, ramp_power):
-    return window_features(signal, int(win_s * SAMPLE_RATE_HZ), STEP, ramp_power)
-
-
 def patient_scores(dataset, win_s, ramp_power, cfg):
-    n_ep = n_det = n_fa = 0
-    hours, latencies = 0.0, []
+    results = []
     for path in sorted(clean_dir(dataset).glob("*.csv")):
         segments, cues = [], []
         for _, seg in pd.read_csv(path).groupby("segment"):
             freeze = seg["freeze"].to_numpy().astype(bool)
-            fi, power, end_idx = weighted_features(seg["acc_mag"].to_numpy(), win_s, ramp_power)
+            fi, power, end_idx = window_features(seg["acc_mag"].to_numpy(), int(win_s * SAMPLE_RATE_HZ), STEP, ramp_power)
             segments.append(dict(end_idx=end_idx, freeze=freeze, **label_windows(freeze, end_idx)))
             cues.append(cue_logic(fi, power, FI_TH, POWER_TH, cfg))
-            hours += len(freeze) / SAMPLE_RATE_HZ / 3600
-        ep, det, _, lat, fa = event_metrics(segments, cues)
-        n_ep, n_det, n_fa, latencies = n_ep + ep, n_det + det, n_fa + fa, latencies + lat
-    return f"{100 * n_det / n_ep:.0f}%", round(n_fa / hours), round(float(np.median(latencies)), 1)
+        results.append(score_subject(segments, cues))
+    caught = sum(r["detected"] for r in results) / sum(r["episodes"] for r in results)
+    false_per_h = sum(r["fa"] for r in results) / sum(r["hours"] for r in results)
+    latencies = [x for r in results for x in r["latencies"]]
+    return f"{100 * caught:.0f}%", round(false_per_h), round(float(np.median(latencies)), 1)
 
 
 def healthy_scores(folder, win_s, ramp_power, cfg):
@@ -66,7 +62,7 @@ def healthy_scores(folder, win_s, ramp_power, cfg):
             continue
         acc = resample(d[["acc_x", "acc_y", "acc_z"]].to_numpy() * 1000 / 9.80665, n, axis=0)
         label = d["label"].to_numpy()[np.minimum((np.arange(n) * len(d) / n).astype(int), len(d) - 1)]
-        fi, power, end_idx = weighted_features(np.linalg.norm(acc, axis=1), win_s, ramp_power)
+        fi, power, end_idx = window_features(np.linalg.norm(acc, axis=1), int(win_s * SAMPLE_RATE_HZ), STEP, ramp_power)
         cue = cue_logic(fi, power, FI_TH, POWER_TH, cfg)
         edges = np.concatenate([[0], np.flatnonzero(label[1:] != label[:-1]) + 1, [n]])
         for a, b in zip(edges[:-1], edges[1:]):

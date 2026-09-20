@@ -87,7 +87,7 @@ function renderStatus(data) {
     }
   }
 
-  const counted = st.total_power !== null && st.total_power > 178;
+  const counted = st.total_power !== null && st.total_power > st.power_threshold;
   setTile("t-fi", st.freeze_index === null ? "–" : st.freeze_index.toFixed(2),
           st.freeze_index === null ? " " : counted ? `freeze above ${st.fi_threshold}` : "ignored while still");
   setTile("t-power", st.total_power === null ? "–" : st.total_power.toLocaleString(), "mg², walking is above 10,000");
@@ -97,12 +97,6 @@ function renderStatus(data) {
   const lostShare = st.samples ? st.lost_samples / (st.samples + st.lost_samples) : 0;
   setTile("t-lost", st.lost_samples.toLocaleString(), `of ${(st.samples + st.lost_samples).toLocaleString()} (${(100 * lostShare).toFixed(2)}%)`,
           st.samples ? (lostShare < 0.001 ? "ok" : "bad") : "");
-
-  // With the device API running, the phone app's sensitivity preset decides the cue, not this switch.
-  document.querySelector(".card.response").hidden = st.cue_owner === "device_api";
-  for (const button of document.querySelectorAll("#response button")) {
-    button.setAttribute("aria-pressed", String(button.dataset.response === st.response));
-  }
 
   $("rec-toggle").textContent = data.recording.active ? "Stop recording" : "Start recording";
   $("rec-name").disabled = data.recording.active;
@@ -227,7 +221,7 @@ function drawMagnitude() {
 function drawFreezeIndex() {
   const canvas = $("c-fi"), g = setupCanvas(canvas);
   drawAxes(g, 0, FI_AXIS_MAX, [0, 1, 2, 3, 4], [[0, "2 min ago", "left"], [1, "now", "right"]]);
-  if (!frames.length) { showTip(canvas, null); return; }
+  if (!frames.length || !status) { showTip(canvas, null); return; }
 
   const { ctx } = g, newest = frames[frames.length - 1].n;
   const xOf = (n) => PAD.left + g.plotW * (1 - (newest - n) / FI_FRAMES);
@@ -249,7 +243,7 @@ function drawFreezeIndex() {
   });
 
   // Threshold: a labelled dashed hairline, not a series.
-  const threshold = status ? status.fi_threshold : 1.056, ty = yOf(threshold);
+  const threshold = status.fi_threshold, powerThreshold = status.power_threshold, ty = yOf(threshold);
   ctx.strokeStyle = css("--text-secondary"); ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
   ctx.beginPath(); ctx.moveTo(PAD.left, ty + 0.5); ctx.lineTo(g.width - PAD.right, ty + 0.5); ctx.stroke();
   ctx.setLineDash([]);
@@ -261,7 +255,7 @@ function drawFreezeIndex() {
   for (let i = 1; i < frames.length; i++) {
     const a = frames[i - 1], b = frames[i];
     if (b.n - a.n !== 1) continue;
-    ctx.strokeStyle = b.power > 178 ? css("--series-1") : css("--axis");
+    ctx.strokeStyle = b.power > powerThreshold ? css("--series-1") : css("--axis");
     ctx.beginPath(); ctx.moveTo(xOf(a.n), yOf(a.fi)); ctx.lineTo(xOf(b.n), yOf(b.fi)); ctx.stroke();
   }
 
@@ -269,7 +263,7 @@ function drawFreezeIndex() {
   if (px === null) { showTip(canvas, null); return; }
   const f = frames.reduce((a, b) => (Math.abs(xOf(b.n) - px) < Math.abs(xOf(a.n) - px) ? b : a));
   crosshair(g, xOf(f.n));
-  const note = f.cue ? "cue playing" : f.power > 178 ? STATES[f.state].label.toLowerCase() : "ignored, too little movement";
+  const note = f.cue ? "cue playing" : f.power > powerThreshold ? STATES[f.state].label.toLowerCase() : "ignored, too little movement";
   showTip(canvas, xOf(f.n), f.fi.toFixed(2), `${((newest - f.n) * FRAME_SECONDS).toFixed(1)} s ago, ${note}`);
 }
 
@@ -303,10 +297,6 @@ $("rec-toggle").addEventListener("click", async () => {
   else await post("/api/record/start?name=" + encodeURIComponent($("rec-name").value));
   refreshRecordings();
 });
-
-for (const button of document.querySelectorAll("#response button")) {
-  button.addEventListener("click", () => post("/api/response?response=" + button.dataset.response));
-}
 
 function setLabel(label) { if (recording.active) post("/api/label?label=" + encodeURIComponent(label)); }
 for (const button of document.querySelectorAll("#labels button")) button.addEventListener("click", () => setLabel(button.dataset.label));

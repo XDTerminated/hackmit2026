@@ -112,8 +112,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(core.stop_recording())
         elif url.path == "/api/label":
             self.send_json(core.set_label(query.get("label", "")))
-        elif url.path == "/api/response":
-            self.send_json(core.set_response(query.get("response", "")))
         else:
             self.send_json({"error": "not found"}, 404)
 

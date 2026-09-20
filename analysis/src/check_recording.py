@@ -1,7 +1,7 @@
-"""Check a capture from device/imu_stream against everything the detector assumes.
+"""Check a recording from the board against everything the detector assumes.
 
-Save the sketch's output to a text file (copy it from the console, or log it on the Linux
-side) and run this on it. It answers, in order:
+Record a session from the diagnostics page of device/fog_app (port 7000), download the CSV and
+run this on it. It answers, in order:
 
   1. Timing: is it really 64 Hz, and how many samples were lost?
   2. Scale:  does gravity read ~1000 mg, and is anything clipping?
@@ -9,11 +9,11 @@ side) and run this on it. It answers, in order:
              so that the detector's two amplitude thresholds make sense for this sensor?
   4. Detector: what the frozen detector does on this recording.
 
-Lines that are not 7 comma-separated numbers (the '#' status lines, console noise) are skipped.
-An optional 8th column is treated as a label (e.g. walking / standing / freezing) and the
+Rows are t_us, ax_mg, ay_mg, az_mg, gx_dps, gy_dps, gz_dps; anything else (header, stray text) is
+skipped. An optional 8th column is treated as a label (e.g. walking / standing / freezing) and the
 detector results are then broken down by label.
 
-Usage: python src/check_recording.py path/to/capture.txt
+Usage: python src/check_recording.py path/to/recording.csv
 """
 
 import sys
@@ -29,25 +29,23 @@ ACC_FULL_SCALE_MG = 8000
 
 
 def parse(path):
-    rows, labels, skipped, status = [], [], 0, None
+    rows, labels, skipped = [], [], 0
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
-            if line.startswith("# sent="):
-                status = line
             parts = line.split(",")
             try:
                 values = [float(v) for v in parts[:7]] if len(parts) >= 7 else None
             except ValueError:
                 values = None
             if values is None:
-                skipped += bool(line) and not line.startswith(("#", "t_us"))
+                skipped += bool(line) and not line.startswith("t_us")
                 continue
             rows.append(values)
             labels.append(parts[7].strip() if len(parts) > 7 else "")
     df = pd.DataFrame(rows, columns=COLUMNS)
     df["label"] = labels
-    return df, skipped, status
+    return df, skipped
 
 
 def verdict(ok, text):
@@ -57,14 +55,12 @@ def verdict(ok, text):
 def main():
     if len(sys.argv) != 2:
         raise SystemExit(__doc__)
-    df, skipped, status = parse(sys.argv[1])
+    df, skipped = parse(sys.argv[1])
     if len(df) < 64 * 10:
         raise SystemExit(f"Only {len(df)} samples parsed; need at least 10 s of data")
     p = DetectorParams()
 
     print(f"{len(df)} samples parsed, {skipped} unreadable lines skipped")
-    if status:
-        print(f"last device status line: {status}")
 
     print("\n1. Timing")
     # micros() wraps every ~71 minutes; unwrap before differencing.
@@ -77,7 +73,7 @@ def main():
     verdict(abs(rate - 64) < 0.2, f"sample rate is {rate:.2f} Hz (detector bands assume 64.00)")
     verdict(jitter_ok > 0.99, f"{100 * jitter_ok:.1f}% of intervals within 1 ms of {PERIOD_US:.0f} us")
     verdict(lost == 0, f"{lost} samples lost in {int((dt > 1.5 * PERIOD_US).sum())} gaps"
-                       + ("" if lost == 0 else " -> try a different ROWS_PER_MESSAGE in the sketch"))
+                       + ("" if lost == 0 else " -> the Bridge is not keeping up; send several samples per notify"))
 
     print("\n2. Scale")
     acc = df[["ax_mg", "ay_mg", "az_mg"]].to_numpy()

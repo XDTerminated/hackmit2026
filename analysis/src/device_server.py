@@ -32,7 +32,6 @@ import random
 import sqlite3
 import sys
 import threading
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -44,7 +43,7 @@ from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from streaming_detector import DetectorParams, StreamingDetector  # noqa: E402
+from streaming_detector import DetectorParams, SampleClock, StreamingDetector  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 VECTOR_DIR = ROOT / "test_vectors"
@@ -140,21 +139,14 @@ class LiveSource(SampleSource):
 
     def __init__(self):
         self.queue: queue.Queue = queue.Queue(maxsize=SAMPLE_RATE_HZ * 10)
-        self.rate_hz = float(SAMPLE_RATE_HZ)
-        self._last_t_us: int | None = None
-        self._device_time_us = 0
-        self._recent: deque = deque(maxlen=SAMPLE_RATE_HZ * 10 + 1)
+        self.clock = SampleClock(SAMPLE_RATE_HZ)
+
+    @property
+    def rate_hz(self) -> float:
+        return self.clock.rate_hz or float(SAMPLE_RATE_HZ)
 
     def push(self, t_us: int, ax_mg: float, ay_mg: float, az_mg: float) -> None:
-        t_us = int(t_us)
-        if self._last_t_us is not None:
-            self._device_time_us += (t_us - self._last_t_us) % 2**32   # micros() wraps every ~71 min
-            self._recent.append(self._device_time_us)
-            if len(self._recent) > SAMPLE_RATE_HZ:
-                span = self._recent[-1] - self._recent[0]
-                if span:
-                    self.rate_hz = (len(self._recent) - 1) * 1_000_000 / span
-        self._last_t_us = t_us
+        self.clock.tick(t_us)
         if self.queue.full():
             with contextlib.suppress(queue.Empty):
                 self.queue.get_nowait()
@@ -411,11 +403,11 @@ class Device:
         gate = self.settings["walking_gate"]
         hold = self.settings["cue_min_seconds"]
         stream = None if self.source.live else self.source.samples()
+        loop = asyncio.get_running_loop()
         period = (STEP / SAMPLE_RATE_HZ) / self.speed
-        pending_resume: list[OpenEvent] = []
 
         while True:
-            tick = asyncio.get_event_loop().time()
+            tick = loop.time()
 
             # Settings that change the detector need it rebuilt; the wearer loses at most
             # one window of history, which is the honest cost of changing sensitivity live.
@@ -428,7 +420,7 @@ class Device:
 
             if self.source.live:
                 # Wait for the sensor in a worker thread so REST and the WebSocket stay responsive.
-                block = await asyncio.get_event_loop().run_in_executor(None, self.source.take, STEP, 2.0)
+                block = await loop.run_in_executor(None, self.source.take, STEP, 2.0)
                 if (block is not None) != self.sensor_ok:
                     self.sensor_ok = block is not None
                     await self.broadcast("status", self.status())
@@ -445,13 +437,13 @@ class Device:
                     frame = got
 
             if frame is not None:
-                await self.on_frame(frame, pending_resume)
+                await self.on_frame(frame)
 
             if not self.source.live:   # a live sensor paces the loop by itself
-                elapsed = asyncio.get_event_loop().time() - tick
+                elapsed = loop.time() - tick
                 await asyncio.sleep(max(0.0, period - elapsed))
 
-    async def on_frame(self, frame, pending_resume) -> None:
+    async def on_frame(self, frame) -> None:
         walking = frame.loco_power > DetectorParams().walk_loco_power
         previous_state = self.state
 
@@ -522,7 +514,15 @@ def seed_history(db, days: int, settings: dict) -> None:
 
 
 def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
-    app = FastAPI(title="FoG device API", version=FIRMWARE)
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        loop_task = asyncio.create_task(device.run())
+        yield
+        loop_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop_task
+
+    app = FastAPI(title="FoG device API", version=FIRMWARE, lifespan=lifespan)
     if debug_routes:
         # Laptop replay only: lets the Expo app run in a browser against this server. On the board
         # the API has no authentication (docs/api.md), so browsers get no cross-origin access:
@@ -533,15 +533,6 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
         )
     api = "/api/v1"
 
-    @app.on_event("startup")
-    async def _start():
-        app.state.loop_task = asyncio.create_task(device.run())
-
-    @app.on_event("shutdown")
-    async def _stop():
-        app.state.loop_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await app.state.loop_task
 
     # -- settings ---------------------------------------------------------
     @app.get(api + "/settings")

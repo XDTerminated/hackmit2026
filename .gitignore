@@ -31,3 +31,6 @@ build/
 .idea/
 .DS_Store
 Thumbs.db
+
+# runtime state of the device server (event log, settings)
+*.sqlite3

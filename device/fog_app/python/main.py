@@ -74,9 +74,7 @@ def imu_info(chip_id):
 
 
 def api_state(since_sample: int = 0, since_frame: int = 0):
-    state = core.state(since_sample, since_frame)
-    state["status"]["cue_owner"] = "device_api" if api_source is not None else "page"
-    return state
+    return core.state(since_sample, since_frame)
 
 
 def api_record_start(name: str = ""):
@@ -89,10 +87,6 @@ def api_record_stop():
 
 def api_label(label: str = ""):
     return core.set_label(label)
-
-
-def api_response(response: str = ""):
-    return core.set_response(response)
 
 
 def api_recordings():
@@ -113,7 +107,6 @@ ui.expose_api("GET", "/api/state", api_state)
 ui.expose_api("POST", "/api/record/start", api_record_start)
 ui.expose_api("POST", "/api/record/stop", api_record_stop)
 ui.expose_api("POST", "/api/label", api_label)
-ui.expose_api("POST", "/api/response", api_response)
 ui.expose_api("GET", "/api/recordings", api_recordings)
 ui.expose_api("GET", "/api/recording", api_recording)
 

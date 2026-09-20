@@ -31,8 +31,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from baseline_fi import (DATASETS, FI_GRID, POWER_GRID, SAMPLE_RATE_HZ, STEP_S, best_cell, counts, event_metrics,
-                         clean_dir, grid_counts, load_subject, rate)
+from baseline_fi import (DATASETS, FI_GRID, POWER_GRID, SAMPLE_RATE_HZ, STEP_S, clean_dir, grid_counts, load_subject,
+                         loso_cell, score_subject, summary_row)
 
 WALK_LOCO_POWER_MG2 = 10_000  # locomotion-band power is ~10-30 mg^2 standing, >10^4 walking
 
@@ -106,28 +106,10 @@ def cue_logic(fi, power, fi_th, power_th, cfg, veto=None):
 
 
 def simulate_subject(segments, fi_th, power_th, cfg, vetoes=None):
-    """Counts for one subject under one configuration."""
+    """score_subject() results for one subject under one cue configuration."""
     vetoes = vetoes or [None] * len(segments)
     cues = [cue_logic(seg["fi"], seg["power"], fi_th, power_th, cfg, veto) for seg, veto in zip(segments, vetoes)]
-    tol = sum(counts(seg["y"], seg["on_zone"], seg["off_zone"], cue, tolerant=True) for seg, cue in zip(segments, cues))
-    n_ep, n_det, n_pre, latencies, n_fa = event_metrics(segments, cues)
-    return dict(tol=tol, episodes=n_ep, detected=n_det, pre_on=n_pre, latencies=latencies, fa=n_fa,
-                cue_frames=sum(c.sum() for c in cues), frames=sum(len(c) for c in cues),
-                hours=sum(len(seg["freeze"]) for seg in segments) / SAMPLE_RATE_HZ / 3600)
-
-
-def pooled_row(name, results):
-    tol = sum(r["tol"] for r in results)
-    latencies = [x for r in results for x in r["latencies"]]
-    return {
-        "cue logic": name,
-        "sens_tol": rate(tol[0], tol[0] + tol[1]), "spec_tol": rate(tol[3], tol[2] + tol[3]),
-        "episodes": f"{sum(r['detected'] for r in results)}/{sum(r['episodes'] for r in results)}",
-        "pre_on": sum(r["pre_on"] for r in results),
-        "latency_s": np.median(latencies) if latencies else float("nan"),
-        "false_cues/h": sum(r["fa"] for r in results) / sum(r["hours"] for r in results),
-        "cue_on_%": 100 * sum(r["cue_frames"] for r in results) / sum(r["frames"] for r in results),
-    }
+    return score_subject(segments, cues)
 
 
 def nested_selection(data, fold_thresholds, min_detected):
@@ -189,18 +171,16 @@ def main():
     grid = {s: grid_counts(data[s], 1) for s in subjects}
     thresholds = {}
     for held_out in subjects:
-        pos = sum(grid[s][0] for s in subjects if s != held_out)
-        n = sum(grid[s][1] for s in subjects if s != held_out)
-        i, j = best_cell(pos, n, args.min_spec)
+        i, j = loso_cell(grid, held_out, args.min_spec)
         thresholds[held_out] = (FI_GRID[i], POWER_GRID[j])
     if args.fixed_thresholds:
         thresholds = {s: tuple(args.fixed_thresholds) for s in subjects}
 
-    rows = [pooled_row(cfg.name, [simulate_subject(data[s], *thresholds[s], cfg) for s in subjects])
+    rows = [summary_row([simulate_subject(data[s], *thresholds[s], cfg) for s in subjects], **{"cue logic": cfg.name})
             for cfg in CONFIGS]
     if args.nested is not None:
         results, chosen = nested_selection(data, thresholds, args.nested)
-        rows.append(pooled_row(f"NESTED (>= {args.nested:.0%} of training episodes)", results))
+        rows.append(summary_row(results, **{"cue logic": f"NESTED (>= {args.nested:.0%} of training episodes)"}))
 
     pd.set_option("display.width", 200)
     tuning = (f"fixed at FI > {args.fixed_thresholds[0]:g}, power > {args.fixed_thresholds[1]:g}" if args.fixed_thresholds
@@ -209,11 +189,10 @@ def main():
     print(pd.DataFrame(rows).to_string(index=False, float_format=lambda v: f"{v:.2f}"))
     if args.per_subject:
         cfg = next(c for c in CONFIGS if c.name == args.per_subject)
-        per_subject = [pooled_row(s, [simulate_subject(data[s], *thresholds[s], cfg)]) for s in subjects]
+        per_subject = [summary_row([simulate_subject(data[s], *thresholds[s], cfg)], subject=s) for s in subjects]
         print()
         print(f"Per subject, cue logic: {cfg.name}")
-        print(pd.DataFrame(per_subject).rename(columns={"cue logic": "subject"})
-              .to_string(index=False, float_format=lambda v: f"{v:.2f}", na_rep="-"))
+        print(pd.DataFrame(per_subject).to_string(index=False, float_format=lambda v: f"{v:.2f}", na_rep="-"))
     if args.nested is not None:
         print("\nCue logic chosen in each fold:")
         for subject, name in zip(subjects, chosen):

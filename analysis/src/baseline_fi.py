@@ -27,7 +27,8 @@ Reported per held-out subject:
                       (either gait already degrading before the annotated
                       onset, or a false alarm that ran into a freeze; the
                       labels cannot tell these apart)
-  FA/h                detection bursts per hour that overlap no freeze
+  false_cues/h        detection bursts per hour that overlap no freeze
+  cue_on_%            share of all windows in which the detector is on
 
 Usage: python src/baseline_fi.py [--windows 2 3 4] [--debounce N] [--min-spec X] [--dataset daphnet|mendeley]
 """
@@ -46,7 +47,6 @@ def clean_dir(dataset):
     return ROOT / "data" / dataset / "clean"
 
 
-CLEAN_DIR = clean_dir("daphnet")
 
 SAMPLE_RATE_HZ = 64
 STEP_S = 0.5
@@ -90,10 +90,14 @@ def detect(fi, power, fi_th, power_th, debounce):
     With debounce > 1 a window is positive only if it and the previous
     debounce - 1 windows all exceed the thresholds.
     """
-    raw = (fi > fi_th) & (power > power_th)
-    out = raw.copy()
-    for lag in range(1, debounce):
-        out[lag:] &= raw[:-lag]
+    return debounced((fi > fi_th) & (power > power_th), debounce)
+
+
+def debounced(pred, n):
+    """True only where pred and the n - 1 entries before it (along axis 0) are all True."""
+    out = pred.copy()
+    for lag in range(1, n):
+        out[lag:] &= pred[:-lag]
         out[:lag] = False
     return out
 
@@ -224,61 +228,64 @@ def event_metrics(segments, preds):
     return n_episodes, n_detected, n_pre_on, latencies, n_false_alarms
 
 
+def loso_cell(grid, held_out, min_spec=None):
+    """Best threshold cell using every subject in grid except held_out (None: use them all).
+
+    grid maps subject -> grid_counts() output.
+    """
+    pos = sum(p for subject, (p, _) in grid.items() if subject != held_out)
+    n = sum(c for subject, (_, c) in grid.items() if subject != held_out)
+    return best_cell(pos, n, min_spec)
+
+
+def score_subject(segments, preds):
+    """Every count the reports need for one subject; preds holds one boolean array per segment."""
+    pred = np.concatenate(preds)
+    y, on_zone, off_zone = (np.concatenate([s[k] for s in segments]) for k in ("y", "on_zone", "off_zone"))
+    n_episodes, n_detected, n_pre_on, latencies, n_false = event_metrics(segments, preds)
+    return dict(strict=counts(y, on_zone, off_zone, pred, tolerant=False),
+                tol=counts(y, on_zone, off_zone, pred, tolerant=True),
+                episodes=n_episodes, detected=n_detected, pre_on=n_pre_on, latencies=latencies, fa=n_false,
+                cue_frames=int(pred.sum()), frames=len(pred),
+                hours=sum(len(s["freeze"]) for s in segments) / SAMPLE_RATE_HZ / 3600)
+
+
+def summary_row(results, **labels):
+    """One report row pooling a list of score_subject() results; labels become the leading columns."""
+    strict, tol = sum(r["strict"] for r in results), sum(r["tol"] for r in results)
+    latencies = [x for r in results for x in r["latencies"]]
+    return {
+        **labels,
+        "sens": rate(strict[0], strict[0] + strict[1]), "spec": rate(strict[3], strict[2] + strict[3]),
+        "sens_tol": rate(tol[0], tol[0] + tol[1]), "spec_tol": rate(tol[3], tol[2] + tol[3]),
+        "episodes": f"{sum(r['detected'] for r in results)}/{sum(r['episodes'] for r in results)}",
+        "pre_on": sum(r["pre_on"] for r in results),
+        "latency_s": np.median(latencies) if latencies else float("nan"),
+        "false_cues/h": sum(r["fa"] for r in results) / sum(r["hours"] for r in results),
+        "cue_on_%": 100 * sum(r["cue_frames"] for r in results) / sum(r["frames"] for r in results),
+    }
+
+
 def evaluate(win_s, debounce, min_spec, dataset="daphnet"):
     win, step = int(win_s * SAMPLE_RATE_HZ), int(STEP_S * SAMPLE_RATE_HZ)
     files = sorted(clean_dir(dataset).glob("*.csv"))
     if not files:
         raise SystemExit(f"No cleaned data in {clean_dir(dataset)}; run clean_{dataset}.py first")
 
-    subjects = [f.stem for f in files]
     data = {f.stem: load_subject(f, win, step) for f in files}
-    counts = {s: grid_counts(data[s], debounce) for s in subjects}
-    pos_all = sum(counts[s][0] for s in subjects)
-    n_all = sum(counts[s][1] for s in subjects)
+    grid = {subject: grid_counts(segments, debounce) for subject, segments in data.items()}
 
-    rows = []
-    totals = dict(strict=np.zeros(4), tol=np.zeros(4), episodes=0, detected=0, pre_on=0, fa=0, hours=0.0)
-    all_latencies = []
-    for held_out in subjects:
-        pos, n = counts[held_out]
-        i, j = best_cell(pos_all - pos, n_all - n, min_spec)
+    rows, results = [], []
+    for held_out, segments in data.items():
+        i, j = loso_cell(grid, held_out, min_spec)
         fi_th, power_th = FI_GRID[i], POWER_GRID[j]
+        result = score_subject(segments, [detect(s["fi"], s["power"], fi_th, power_th, debounce) for s in segments])
+        results.append(result)
+        rows.append(summary_row([result], subject=held_out, fi_th=fi_th, power_th=power_th))
+    rows.append(summary_row(results, subject="POOLED", fi_th=float("nan"), power_th=float("nan")))
 
-        strict = np.array([c[i, j] for c in confusion(pos, n, tolerant=False)])
-        tol = np.array([c[i, j] for c in confusion(pos, n, tolerant=True)])
-        n_ep, n_det, n_pre, latencies, n_fa = event_metrics(
-            data[held_out], [detect(s["fi"], s["power"], fi_th, power_th, debounce) for s in data[held_out]])
-        hours = sum(len(s["freeze"]) for s in data[held_out]) / SAMPLE_RATE_HZ / 3600
-
-        totals["strict"] += strict
-        totals["tol"] += tol
-        totals["episodes"] += n_ep
-        totals["detected"] += n_det
-        totals["pre_on"] += n_pre
-        totals["fa"] += n_fa
-        totals["hours"] += hours
-        all_latencies += latencies
-        rows.append(dict(
-            subject=held_out, fi_th=fi_th, power_th=power_th,
-            sens=rate(strict[0], strict[0] + strict[1]), spec=rate(strict[3], strict[2] + strict[3]),
-            sens_tol=rate(tol[0], tol[0] + tol[1]), spec_tol=rate(tol[3], tol[2] + tol[3]),
-            episodes=f"{n_det}/{n_ep}", pre_on=n_pre,
-            latency_s=np.median(latencies) if latencies else float("nan"),
-            fa_per_h=n_fa / hours,
-        ))
-
-    st, tl = totals["strict"], totals["tol"]
-    pooled = dict(
-        subject="POOLED", fi_th=float("nan"), power_th=float("nan"),
-        sens=rate(st[0], st[0] + st[1]), spec=rate(st[3], st[2] + st[3]),
-        sens_tol=rate(tl[0], tl[0] + tl[1]), spec_tol=rate(tl[3], tl[2] + tl[3]),
-        episodes=f"{totals['detected']}/{totals['episodes']}", pre_on=totals["pre_on"],
-        latency_s=np.median(all_latencies), fa_per_h=totals["fa"] / totals["hours"],
-    )
-
-    i, j = best_cell(pos_all, n_all, min_spec)
-    deploy = (FI_GRID[i], POWER_GRID[j])
-    return pd.DataFrame(rows + [pooled]), deploy
+    i, j = loso_cell(grid, None, min_spec)
+    return pd.DataFrame(rows), (FI_GRID[i], POWER_GRID[j])
 
 
 def main():
