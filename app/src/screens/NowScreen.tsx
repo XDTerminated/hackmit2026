@@ -100,6 +100,12 @@ export function NowScreen({ theme, device }: { theme: Theme; device: Device }) {
         </Card>
       ) : null}
 
+      {settings?.cue_output === 'phone' && !cue ? (
+        <Text style={{ ...theme.font.label, color: theme.c.muted, textAlign: 'center' }}>
+          Cues play on this phone. Keep the app open: a locked phone cannot play one.
+        </Text>
+      ) : null}
+
       {status && !status.sensor_ok ? (
         <Card theme={theme} style={{ borderColor: theme.c.accent }}>
           <Label theme={theme}>Sensor not responding</Label>

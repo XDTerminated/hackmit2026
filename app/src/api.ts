@@ -21,6 +21,7 @@ export type Status = {
   state: DeviceState;
   cue_active: boolean;
   cue: LiveCue | null;
+  apps_connected?: number;
   paused_until: string | null;
   events_today: number;
   uptime_s: number;

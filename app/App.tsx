@@ -1,6 +1,7 @@
 // Three tabs, a connection banner above them, and one hook owning the device link.
 // No navigation library: three screens do not need a router.
 
+import { useKeepAwake } from 'expo-keep-awake';
 import { StatusBar } from 'expo-status-bar';
 import { useMemo, useState } from 'react';
 import {
@@ -29,6 +30,10 @@ function Shell() {
   const theme = useMemo(() => makeTheme(scheme), [scheme]);
   const device = useDevice();
   const [tab, setTab] = useState<Tab>('Now');
+
+  // The phone is the cue. A locked or backgrounded phone runs no timers and receives no messages,
+  // so it could never start one: keep the screen on for as long as the app is open.
+  useKeepAwake();
 
   // Lives here, not in a screen: a cue must keep playing while the wearer is looking
   // at their history or their settings.

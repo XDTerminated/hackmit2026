@@ -66,7 +66,9 @@ DEFAULT_SETTINGS = {
     "sensitivity": "balanced",
     "walking_gate": True,
     "cue_sound": True,
-    "cue_output": "buzzer",
+    # The prototype has no buzzer fitted: the wearer's phone plays the cue. With no app connected the
+    # device falls back to its own output, which on this hardware is only the on-board LED.
+    "cue_output": "phone",
     "cue_vibration": False,
     "tempo_bpm": 100,
     "volume": 70,
@@ -318,6 +320,7 @@ class Device:
             "state": self.state,
             "cue_active": self.cue_active,
             "cue": self.active_cue,
+            "apps_connected": len(self.clients),
             "paused_until": iso(self.paused_until) if self.paused_until else None,
             "events_today": self.count_today(),
             "uptime_s": int((now_utc() - self.started_at).total_seconds()),

@@ -70,6 +70,9 @@ src/screens/           Now, History, Settings
 - **The phone cue is a click, a vibration pulse, or both** (Settings: Sound, Vibration), on the same beat.
   Android uses a 70 ms vibration; iOS ignores vibration durations (always ~0.4 s, which smears into the
   next beat), so it gets a single heavy haptic tap per beat instead. Expo Go is enough for both.
+- **The phone is the cue.** `cue_output` defaults to `phone`, so the device needs no buzzer. The price: the
+  app must be open on screen. It keeps the screen awake for that reason (`expo-keep-awake`), and says so on the
+  Now screen. A locked or backgrounded phone plays nothing; see "The limit of a phone cue" in `docs/api.md`.
 - **One audible cue source at a time.** Two metronomes on two clocks drift apart, and an unsteady
   beat is worse than none. `cue_output` picks buzzer or phone; the device falls back to the buzzer
   if no app is connected.

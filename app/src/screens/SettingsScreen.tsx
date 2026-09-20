@@ -152,7 +152,7 @@ export function SettingsScreen({
             <ToggleRow
               theme={theme}
               title="Play on this phone"
-              note="Otherwise the buzzer on the device plays it. Only one at a time: two metronomes drift apart."
+              note="The prototype has no buzzer: with this off, a cue only blinks the light on the device. Keep this app open and on screen, because a locked phone cannot play a cue."
               value={settings.cue_output === 'phone'}
               onChange={(on) => updateSettings({ cue_output: on ? 'phone' : 'buzzer' })}
             />

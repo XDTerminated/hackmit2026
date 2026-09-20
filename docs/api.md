@@ -35,7 +35,7 @@ updated object.
 | `sensitivity` | string | `"balanced"` | `"catch_more"`, `"balanced"`, `"fewer_alerts"` | preset, see table below |
 | `walking_gate` | bool | `true` | | only start a cue if the wearer was walking in the last 5 s. Off: can catch freezes when starting to walk, but will also beep while standing or sitting |
 | `cue_sound` | bool | `true` | | play an audible metronome at all |
-| `cue_output` | string | `"buzzer"` | `"buzzer"`, `"phone"` | where the audible metronome plays. Only one at a time: two metronomes on two clocks drift apart, and an unsteady beat is worse than none |
+| `cue_output` | string | `"phone"` | `"buzzer"`, `"phone"` | where the audible metronome plays. The prototype has no buzzer fitted, so the phone is the default and the fallback below only blinks the board's LED. Only one at a time: two metronomes on two clocks drift apart, and an unsteady beat is worse than none |
 | `cue_vibration` | bool | `false` | | a pulse on the same beat: the phone vibrates when `cue_output` is `"phone"`, otherwise the device's vibration motor (not fitted on the prototype) |
 | `tempo_bpm` | int | `100` | 60 to 140 | metronome rate. Should be set to the wearer's comfortable stepping rate, ideally with their physio. Fast rates can make gait worse |
 | `volume` | int | `70` | 0 to 100 | buzzer loudness |
@@ -45,12 +45,19 @@ updated object.
 At least one of `cue_sound` / `cue_vibration` must stay on while `detection_enabled` is true; the
 device rejects a change that would silence both.
 
-`cue_output: "phone"` is for demos and for wearers who cannot hear the piezo through clothing. The
+`cue_output: "phone"` makes the wearer's phone the cue, so the device needs no sounder of its own. The
 app plays the beat on receiving `cue_started` (below) and stops on `cue_stopped`. **If no app is
 connected when a cue starts, or the last app disconnects while one is playing, the device plays it on
 the buzzer**, because a setting must never leave the wearer with no cue; `cue.output` says which one is
 playing. The app closes its connection when it goes to the background (a phone cannot keep a beat with
 its timers suspended), which hands the cue to the buzzer in the same way.
+
+**The limit of a phone cue.** A phone app only runs timers and receives messages while it is open on
+screen. Locked, or in the background, it can neither hear `cue_started` nor keep a beat, so no cue plays. The
+app keeps the screen awake while it is open and closes its connection when it leaves the foreground, which the
+device sees (`status.apps_connected` drops to 0) and answers by using its own output. With no buzzer fitted
+that output is only an LED, so on this prototype **an app that is not open means no audible cue**. Fitting the
+piezo (the sketch already drives `BUZZER_PIN`) turns that fallback back into a real one.
 
 ### Sensitivity presets
 

@@ -42,6 +42,12 @@ export function useMetronome(active: boolean, bpm: number, channels: CueChannels
     setAudioModeAsync({ playsInSilentMode: true }).catch(() => {});
   }, []);
 
+  // The click is the cue: always at full player volume. How loud that is stays the wearer's choice,
+  // through the phone's own volume buttons.
+  useEffect(() => {
+    player.volume = 1;
+  }, [player]);
+
   useEffect(() => {
     if (!active) return;
 
