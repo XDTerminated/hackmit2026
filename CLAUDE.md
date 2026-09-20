@@ -31,7 +31,15 @@ labelled recording). It runs on the board as of 2026-09-19: 64.0 Hz over the Bri
 reads 1047 mg, a still board reads 1 mg^2. Deploy over USB with `bash device/fog_app/deploy.sh` (uses App Lab's adb;
 also forwards the page to http://localhost:7000). It is set as the board's startup app, so it runs from a power
 bank with no laptop. Not yet tested worn on a leg.
-Not started: the C port, persistent event storage, the settings API and the mobile app (contract drafted in `docs/api.md`).
+
+`analysis/src/device_server.py` (Khai) is the real Linux-side server: detector loop, SQLite event log, REST + WebSocket
+from `docs/api.md`, with a `SampleSource` seam; so far it has only run on CSV replay. `app/` is an Expo SDK 57 app
+(Now, History, Settings) working against it, with the phone audio cue. `CONTEXT.md` is the glossary (wearer, cue,
+event, false alarm vs false cue); ADR 0001 and 0002 record detection-on-device and Python-not-C for the prototype.
+Branch `board-integration` merges that work with the board app.
+
+Not done: `device_server.py` fed from the Bridge on the board; phone vibration cue; the app rendered on a real
+phone; the C port.
 
 ## The detector (v2, recency-weighted; port this)
 
@@ -181,9 +189,10 @@ CMSIS-DSP `arm_rfft_fast_f32` uses the same unnormalised FFT convention as NumPy
 
 ## Next steps
 
-1. `device/detector/`: C port, passing all four test vectors on a laptop.
-2. Mock server for `docs/api.md` in `analysis/` (replays Daphnet detections), then the real Linux-side
-   logger (SQLite + HTTP).
-3. Scaffold `app/` against a mock of that API.
-4. Flash `imu_stream`, run `check_recording.py` on a capture, then own labelled recordings and re-check
-   the amplitude thresholds.
+1. Run `device_server.py` on the UNO Q inside the App Lab app, fed by a Bridge `SampleSource` (the sketch in
+   `device/fog_app/` already delivers 64 Hz over the Bridge), so the phone app talks to the real device.
+2. Run `app/` on a real phone (Expo Go) against it and fix what rendering reveals; add the phone vibration cue.
+3. Wear it: confirm band power is bimodal (still tens of mg^2, walking >10^4), try simulated freezes, record
+   labelled sessions from the port-7000 page, run `check_recording.py`.
+4. Own recordings, then re-tune the amplitude thresholds -- on new recordings, never the ones reported from.
+5. `device/detector/`: the C port, still the plan of record (ADR-0002), no longer on the demo path.

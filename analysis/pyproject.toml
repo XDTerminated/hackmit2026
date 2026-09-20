@@ -5,9 +5,12 @@ description = "Data cleaning, detector evaluation and firmware reference for the
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "fastapi>=0.141.1",
     "joblib",
     "numpy",
     "pandas",
     "scikit-learn",
     "scipy",
+    "uvicorn>=0.53.0",
+    "websockets>=17.1",
 ]
