@@ -46,7 +46,12 @@ detector if the API cannot start. `deploy.sh` ships `device_server.py` + `stream
 phone cue now has vibration (Android `Vibration`, iOS haptic tap) and a Sound toggle. All tested on a laptop with a
 fake sensor thread (API answers in 3 ms while live).
 
-Not done: that integration deployed and run on the board; the app on a real phone; the C port.
+Deployed and verified on the board (2026-09-19 evening): the device API answers on port 8000 over USB forward and
+over the HackMIT Wi-Fi (~120 ms), source `bridge`, 64.0 Hz, no lost samples with both consumers running,
+`websockets` installs itself on first start, the live WebSocket delivers `cue_started`/`cue_stopped`, the debug
+route is absent.
+
+Not done: the app on a real phone against the board; a worn test; the C port.
 
 ## The detector (v2, recency-weighted; port this)
 
@@ -196,11 +201,8 @@ CMSIS-DSP `arm_rfft_fast_f32` uses the same unnormalised FFT convention as NumPy
 
 ## Next steps
 
-1. Plug the board in and run `bash device/fog_app/deploy.sh`: first run of the device API on the board. Check the
-   logs say it is on port 8000 (needs the `websockets` package from `python/requirements.txt`, so the board needs
-   internet on that first start) and that `http://<board>:8000/api/v1/status` answers.
-2. Run `app/` on a real phone (Expo Go) against the board; check the click, the vibration and the STOP button.
-3. Wear it: confirm band power is bimodal (still tens of mg^2, walking >10^4), try simulated freezes, record
+1. Run `app/` on a real phone (Expo Go) against the board; check the click, the vibration and the STOP button.
+2. Wear it: confirm band power is bimodal (still tens of mg^2, walking >10^4), try simulated freezes, record
    labelled sessions from the port-7000 page, run `check_recording.py`.
-4. Own recordings, then re-tune the amplitude thresholds -- on new recordings, never the ones reported from.
-5. `device/detector/`: the C port, still the plan of record (ADR-0002), no longer on the demo path.
+3. Own recordings, then re-tune the amplitude thresholds -- on new recordings, never the ones reported from.
+4. `device/detector/`: the C port, still the plan of record (ADR-0002), no longer on the demo path.
