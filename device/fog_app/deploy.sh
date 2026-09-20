@@ -32,7 +32,8 @@ if [ "$action" = all ]; then
     "$ADB" forward tcp:8000 tcp:8000 >/dev/null
     echo; echo "Page: http://localhost:7000 on this laptop (through USB)"
     echo "      http://${ip:-<board-ip>}:7000 from any device on the same Wi-Fi"
-    echo "Phone app: set the device address to ${ip:-<board-ip>} (API on port 8000)"; echo
+    echo "Phone app: device address arduino.local:8000, or ${ip:-<board-ip>}:8000 if the name does not resolve"
+    echo "           (the IP changes whenever the board joins a different network)"; echo
 fi
 if [ "$action" = all ] || [ "$action" = logs ]; then
     "$ADB" shell "arduino-app-cli app logs user:fog_app" | tail -40

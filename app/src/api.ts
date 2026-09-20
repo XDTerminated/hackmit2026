@@ -2,8 +2,10 @@
 // one WebSocket for live state. The device is the source of truth: this file never
 // decides anything, it only asks and listens.
 
-// The UNO Q on the HackMIT network. It changes with the network: set it in Settings on the phone.
-export const DEFAULT_HOST = '10.189.75.80:8000';
+// The UNO Q announces itself as arduino.local (mDNS), which stays the same when the network
+// changes; its IP address does not. If the name does not resolve on a phone or network, type the
+// IP address in Settings instead (deploy.sh prints it).
+export const DEFAULT_HOST = 'arduino.local:8000';
 
 type DeviceState = 'still' | 'walking' | 'freeze_detected';
 

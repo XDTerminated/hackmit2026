@@ -27,8 +27,9 @@ Both machines must be on the same network. The default device address is baked i
 ### Against the real device
 
 The UNO Q runs the same server (`device/fog_app`, deployed with `bash device/fog_app/deploy.sh`), fed by
-the IMU instead of a CSV, on port 8000. Put the phone on the same Wi-Fi as the board and set the device
-address in Settings to `<board-ip>:8000`; the deploy script prints it. Event Wi-Fi often blocks
+the IMU instead of a CSV, on port 8000. Put the phone on the same Wi-Fi as the board. The app's default address is `arduino.local:8000`, the
+board's mDNS name, which survives a change of network; if it does not resolve, set the address in Settings
+to `<board-ip>:8000` (the deploy script prints it, and it changes with every network). Event Wi-Fi often blocks
 device-to-device traffic: if the app cannot connect, put the phone and the board on a phone hotspot.
 `/debug/freeze` does not exist there; walk, stop and tremble the leg instead.
 
