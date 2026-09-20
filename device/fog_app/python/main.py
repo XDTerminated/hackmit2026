@@ -69,8 +69,11 @@ def imu_sample(t_us, ax_mg, ay_mg, az_mg, gx_dps, gy_dps, gz_dps):
 
 
 def imu_info(chip_id):
+    # The sketch repeats this every 10 s. It arrives on the thread that delivers samples, so only
+    # log when it changes (a different chip id after start means the sensor was swapped or reset).
+    if core.chip_id != int(chip_id):
+        logger.info(f"IMU WHO_AM_I = 0x{int(chip_id):02x}")
     core.set_chip_id(chip_id)
-    logger.info(f"IMU WHO_AM_I = 0x{int(chip_id):02x}")
 
 
 def api_state(since_sample: int = 0, since_frame: int = 0):
