@@ -1,0 +1,49 @@
+{
+  "dataset": {
+    "name": "FoG-STAR",
+    "participants": 22,
+    "sample_rate_hz": 60,
+    "sensors": "ankle IMU \u00b7 accelerometer + gyroscope",
+    "labels": "101 expert-labelled FoG episodes \u00b7 severity \u00b7 task",
+    "citation": "Turetta et al., FoG-STAR: Freezing of Gait Severity, Tasks, Activities, and Ratings",
+    "url": "https://doi.org/10.5281/zenodo.17037669"
+  },
+  "events": [
+    {
+      "event_id": "fogstar-001",
+      "title": "FoG-STAR event 1 \u00b7 straight walk",
+      "file": "fogstar-001.json",
+      "subject_id": "S09",
+      "task": "straight walking",
+      "fog_severity": "trembling",
+      "duration_s": 13.0
+    },
+    {
+      "event_id": "fogstar-002",
+      "title": "FoG-STAR event 2 \u00b7 walking + counting",
+      "file": "fogstar-002.json",
+      "subject_id": "S20",
+      "task": "walking + counting",
+      "fog_severity": "trembling",
+      "duration_s": 14.9
+    },
+    {
+      "event_id": "fogstar-turning",
+      "title": "FoG-STAR turning event",
+      "file": "fogstar-turning.json",
+      "subject_id": "S03",
+      "task": "360\u00b0 turning",
+      "fog_severity": "trembling",
+      "duration_s": 17.8
+    },
+    {
+      "event_id": "fogstar-doorway",
+      "title": "FoG-STAR doorway event",
+      "file": "fogstar-doorway.json",
+      "subject_id": "S09",
+      "task": "walking through doorway",
+      "fog_severity": "akinesia",
+      "duration_s": 13.5
+    }
+  ]
+}

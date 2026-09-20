@@ -1,0 +1,11 @@
+{
+  "name": "Stride Walking Companion",
+  "short_name": "Stride",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b151c",
+  "theme_color": "#0b151c",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

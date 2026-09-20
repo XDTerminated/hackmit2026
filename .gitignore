@@ -13,8 +13,17 @@ node_modules/
 dist/
 web-build/
 *.tsbuildinfo
+.next/
+.turbo/
+npm-debug.log*
 .env
 .env.*.local
+
+# Stride dashboard local runtime files
+backend/.env
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
 
 # arduino / C (device/)
 build/
