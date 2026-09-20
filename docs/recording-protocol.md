@@ -59,8 +59,8 @@ labelled W / S / N: this is what measures false cues.
 Download the file from the list under the Record panel into `data/own/raw/`, then:
 
 ```
-cd analysis
-uv run src/check_recording.py ../data/own/raw/<file>.csv
+cd backend
+uv run analysis/check_recording.py ../data/own/raw/<file>.csv
 ```
 
 Look at it before recording the next person. It must say 64 Hz with no lost samples and gravity near

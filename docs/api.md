@@ -1,7 +1,7 @@
 # Device API: settings and events
 
-The contract between the device's Linux side (`device/`) and the companion app (`app/`).
-Status: implemented by `analysis/src/device_server.py` and consumed by `app/`. Change it here first, then in code.
+The contract between the device's Linux side (`backend/arduino/`) and the companion app (`frontend/`).
+Status: implemented by `backend/api/device_server.py` and consumed by `frontend/`. Change it here first, then in code.
 
 ## Principles
 
@@ -65,7 +65,7 @@ A cue helps most near the wearer's own comfortable cadence, and that differs bet
 volunteers: 100 and 91 steps a minute). With `tempo_auto` the device measures it: whenever the last 6 s were
 steady walking (walking-level power, freeze index below 0.7, no cue playing) it takes the stride time from the
 autocorrelation of the shin acceleration, every 2 s, and keeps the median of the last 5 minutes of such
-estimates (`analysis/src/cadence.py`). One beat per step: tempo = cadence, limited to 60-140. On our
+estimates (`backend/api/cadence.py`). One beat per step: tempo = cadence, limited to 60-140. On our
 recordings every estimate was within 2.4 steps/min of the stride time from the gyro.
 
 - The cadence is deliberately the wearer's *usual* one, never the last seconds before the freeze: steps
@@ -212,8 +212,8 @@ middle of a cue cannot corrupt them.
 
 ## Developing without hardware
 
-Build the app against a mock of this API: a server in `analysis/` that feeds a Daphnet recording
-through `src/streaming_detector.py` and serves everything above — same REST routes, same WebSocket,
+Build the app against a mock of this API: a server in `backend/` that feeds a Daphnet recording
+through `api/streaming_detector.py` and serves everything above — same REST routes, same WebSocket,
 same schemas. Every screen can then be built, and the whole thing demoed, before the board works.
 
 It has three modes:

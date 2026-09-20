@@ -1,14 +1,14 @@
 # The prototype's detector is Linux-side Python, not C on the STM32
 
-`device/README.md` and `test_vectors/README.md` describe the target as a hardware-free C detector
-(`device/detector/`) running on the UNO Q's STM32. For the HackMIT prototype we are instead running
-`analysis/src/streaming_detector.py` on the UNO Q's Linux side, in the same process that serves the
+`backend/arduino/README.md` and `test_vectors/README.md` describe the target as a hardware-free C detector
+(`backend/arduino/detector/`) running on the UNO Q's STM32. For the HackMIT prototype we are instead running
+`backend/api/streaming_detector.py` on the UNO Q's Linux side, in the same process that serves the
 API and owns the event log. The reference implementation is already verified frame-for-frame
 against the batch evaluation on all 35,405 Daphnet frames, so this removes porting risk entirely
 from a fixed-deadline build; the C port's real payoffs — battery life and cueing without Linux
 booted — are not prototype concerns.
 
-**This is a deferral, not a cancellation.** `device/detector/` and the four test vectors remain the
+**This is a deferral, not a cancellation.** `backend/arduino/detector/` and the four test vectors remain the
 plan of record; read this before assuming the C port was simply never finished.
 
 ## Consequences

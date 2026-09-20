@@ -1,0 +1,100 @@
+# frontend
+
+Companion app for the freezing-of-gait device: shows the wearer what happened, stops a cue that
+fired wrongly, and carries the device's settings. Expo (React Native) + TypeScript, SDK 57.
+
+The device is the source of truth. This app is a viewer and a remote control: it never detects
+anything, and everything it shows comes from `../docs/api.md`.
+
+## Running it
+
+Two processes. Start the device server first:
+
+```bash
+cd ../backend
+uv run api/device_server.py --seed-days 14          # 1x replay, 14 days of demo history
+```
+
+Then the app:
+
+```bash
+npm start                                           # scan the QR with Expo Go
+```
+
+Both machines must be on the same network. The default device address is baked into
+`src/api.ts` (`DEFAULT_HOST`); change it in Settings on the phone, or edit that constant.
+
+### Against the real device
+
+The UNO Q runs the same server (`backend/arduino/fog_app`, deployed with `bash backend/arduino/fog_app/deploy.sh`), fed by
+the IMU instead of a CSV, on port 8000. Put the phone on the same Wi-Fi as the board. The app's default address is `arduino.local:8000`, the
+board's mDNS name, which survives a change of network; if it does not resolve, set the address in Settings
+to `<board-ip>:8000` (the deploy script prints it, and it changes with every network). Event Wi-Fi often blocks
+device-to-device traffic: if the app cannot connect, put the phone and the board on a phone hotspot.
+`/debug/freeze` does not exist there; walk, stop and tremble the leg instead.
+
+For a demo where you cannot wait for a real freeze:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/debug/freeze -d '{}'
+```
+
+That route exists only in the replay server, never on the board.
+
+## Layout
+
+```
+App.tsx                three tabs and the connection banner; no navigation library
+src/api.ts             typed client for docs/api.md
+src/useDevice.ts       the device link: live WebSocket, a REST sync on every connect, reconnection, and
+                       every action (failures are shown under the banner on all tabs)
+src/theme.ts           colours; nothing in the palette shouts
+src/components/ui.tsx  cards, buttons, banner, and the stacked bar chart (react-native-svg)
+src/screens/           Home, History (the "My data" tab), Settings
+src/usePreferences.ts  what the phone remembers: the look of the app, the device address
+```
+
+## The three screens
+
+Designed for the wearer, who is likely to be older and to have a tremor and slowed movement, following the
+guidelines Nunes et al. (2015) derived from tests with 39 people with Parkinson's: tap targets of 14 mm a side
+(`TARGET` in `src/theme.ts`, 88 points), taps instead of drags (the speed control is two buttons, not a slider),
+high contrast, little on a screen, nothing that must be done against the clock, more than one channel for
+anything that matters; and, as in the Dexcom app, one status that can be read at arm's length, with the data a
+tab away. The app says "beat" to the wearer; "cue" is the project's word (`CONTEXT.md`).
+
+- **On every tab**: a banner only when something is wrong (not connected, connecting), and the last error in
+  plain words. A cue takes the screen over: whatever tab is open, the app goes to Home.
+- **Home**: one picture, one word, one sentence ("Ready", "Paused", "Not connected", "Sensor problem", "Switched
+  off"), and "Play a beat now". No numbers. While a cue plays: a circle that pulses with the click and the
+  vibration, "Step to the beat", and one enormous STOP. Stopping an automatic cue marks the event a false alarm;
+  a card then asks "Was that right?" and stays, with no countdown, until answered or until the next cue.
+- **My data**: beats today against yesterday, a 14-day stacked bar chart, the share of beats followed by walking
+  again (the only number that argues the device works), and the measured walking pace. Tap a bar for that day's
+  beats; each can be marked a false alarm.
+- **Settings**: what a wearer changes first: the beat (sound, vibration, "Match my walking pace", the fallback
+  speed, "Try the beat"), how the app looks, taking a break. Folded away under **Advanced setup**, for whoever
+  sets the device up: the device address, sensitivity, the walking gate, and whether the phone plays the beat.
+
+Light and dark: **Automatic** (the default) follows the clock, not the phone's setting: light from 7:00 to 19:00,
+dark otherwise, because a bright screen in a dim room is unwelcome. Light and Dark pin it. The choice and the last
+device address that worked are the only things the phone stores (`src/usePreferences.ts`, AsyncStorage).
+
+For development, `EXPO_PUBLIC_DEVICE_HOST=192.168.137.50:8000` in `frontend/.env` replaces the default address.
+
+## Decisions worth knowing
+
+- **No push notifications on a freeze.** The cue is the notification.
+- **The phone cue is a click, a vibration pulse, or both** (Settings: Sound, Vibration), on the same beat.
+  Android uses a 70 ms vibration; iOS ignores vibration durations (always ~0.4 s, which smears into the
+  next beat), so it gets a single heavy haptic tap per beat instead. Expo Go is enough for both.
+- **The phone is the cue.** `cue_output` defaults to `phone`, so the device needs no buzzer. The price: the
+  app must be open on screen. It keeps the screen awake for that reason (`expo-keep-awake`), and says so on the
+  Home screen. A locked or backgrounded phone plays nothing; see "The limit of a phone cue" in `docs/api.md`.
+- **One audible cue source at a time.** Two metronomes on two clocks drift apart, and an unsteady
+  beat is worse than none. `cue_output` picks buzzer or phone; the device falls back to the buzzer
+  if no app is connected.
+- **Stopping a cue never pauses detection.** That is a separate, deliberate action, so the device
+  is never silently disarmed.
+- **No local database.** History is fetched from the device. Offline history was cut for time; see
+  `docs/api.md` for the `since` cursor it would use.

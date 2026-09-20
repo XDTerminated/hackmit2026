@@ -11,14 +11,19 @@ motor is fitted: the phone is the cue, and the sketch still drives a buzzer pin 
 
 ## Repo layout
 
-Polyglot monorepo; each part has its own README and tooling, and the parts share no code.
+Two halves, restructured 2026-09-20 (before that: `app/`, `device/`, `analysis/src/`).
 
-- `analysis/` Python (uv). Working. Scripts in `analysis/src/`, run as `uv run src/<name>.py` from `analysis/`.
-  Paths are resolved from the repo root, so scripts work from any directory.
-- `device/` UNO Q code: `device/fog_app/` is the App Lab app that runs on the board, `device/bringup/` the wiring
-  test. It ships three files from `analysis/src/` (see Status). `device/detector/` (hardware-free C) is deferred.
-- `app/` companion phone app, Expo (React Native, TypeScript).
-- `test_vectors/` contract between `analysis/` and `device/`. Its README is the firmware spec.
+- `frontend/` the phone app, Expo (React Native, TypeScript).
+- `backend/` everything else, with one Python environment (`backend/pyproject.toml`, uv). Run scripts from
+  `backend/`: `uv run api/<name>.py`, `uv run analysis/<name>.py`. Paths are resolved from the repo root.
+  - `backend/arduino/` the UNO Q: `fog_app/` is the App Lab app that runs on the board (its `deploy.sh` also ships
+    the four runtime files from `backend/api/`), `bringup/` the wiring test. `detector/` (hardware-free C) is deferred.
+  - `backend/api/` what runs the device: `streaming_detector.py` (the one detector, NumPy only), `cadence.py`,
+    `device_server.py`, `demo_page.html`, and `check_device_server.py`.
+  - `backend/analysis/` the research: cleaning, evaluation, experiments, and `verify_detector.py` (`--verify`,
+    `--check-vectors`, `--export`). It imports the detector from `api/` through `detector.py`; `api/` never
+    imports from `analysis/`.
+- `test_vectors/` contract between the detector and any port of it. Its README is the firmware spec.
 - `docs/` dataset docs and licences; `docs/api.md` is the device-to-app contract: user settings,
   sensitivity presets with measured trade-offs, actions, status, events. Change it there first, then in code.
 - `data/<dataset>/raw` and `/clean` are gitignored. See README.md for how to fetch them.
@@ -29,30 +34,30 @@ Polyglot monorepo; each part has its own README and tooling, and the parts share
 calibration and random-forest experiments, the streaming reference detector and the firmware test vectors.
 Shared evaluation code lives in `baseline_fi.py` (`window_features`, `detect`/`debounced`, `grid_counts`,
 `loso_cell`, `score_subject`, `summary_row`, `event_metrics`); the experiment scripts only add what is specific
-to them. `streaming_detector.py` holds the one detector (`StreamingDetector`) and `SampleClock` (delivered
-sample rate and lost samples); `--verify` checks it against the batch code, `--check-vectors` against
-`test_vectors/`.
+to them. `backend/api/streaming_detector.py` holds the one detector (`StreamingDetector`) and `SampleClock`
+(delivered sample rate and lost samples); `verify_detector.py --verify` checks it against the batch code,
+`--check-vectors` against `test_vectors/`.
 
-**Device (runs on the board).** `device/fog_app/` is the App Lab app: the sketch samples the IMU at 64 Hz and
+**Device (runs on the board).** `backend/arduino/fog_app/` is the App Lab app: the sketch samples the IMU at 64 Hz and
 pushes each sample over the Bridge; `python/main.py` feeds two consumers. Port 8000 is the device API
-(`analysis/src/device_server.py`, Khai's server: presets and settings, SQLite event log, REST + WebSocket); it
+(`backend/api/device_server.py`, Khai's server: presets and settings, SQLite event log, REST + WebSocket); it
 owns the cue and plays it at the wearer's own cadence (auto tempo, `cadence.py`). `http://<board>:8000/demo` is
 the demo screen (`demo_page.html`, fed by `GET /api/v1/frames`): what the real detector sees and decides, for a
 projector; it polls rather than use the WebSocket so it never counts as a connected phone. Port 7000 is the
 diagnostics page (`fog_core.py`): live charts, sample-rate check, labelled recording. If the API cannot start, the page's detector drives the cue.
-`bash device/fog_app/deploy.sh` deploys over USB (App Lab's adb), ships `device_server.py`,
+`bash backend/arduino/fog_app/deploy.sh` deploys over USB (App Lab's adb), ships `device_server.py`,
 `streaming_detector.py`, `cadence.py` and `demo_page.html` with the app, and forwards both ports to localhost. The
 app is the board's startup app.
 Verified on the board: 64.0 Hz, no lost samples with both consumers, gravity 1047 mg, a still board reads
 1 mg^2, API reachable over USB and over the HackMIT Wi-Fi, WebSocket cue messages, no debug route.
-`device/bringup/` is the original wiring-test sketch. Wi-Fi: the board must share a network with the phone; a phone
+`backend/arduino/bringup/` is the original wiring-test sketch. Wi-Fi: the board must share a network with the phone; a phone
 hotspot works (API median 29 ms, cue message ~50 ms), guest/hotel networks do not (captive portal, client
 isolation, confirmed on the Hyatt network); with no phone data to spare, the laptop's Windows Mobile hotspot works
 (`laptop-hotspot`, board at 192.168.137.x, API median 34 ms). Auto-join priorities are set on the board with nmcli
-(laptop hotspot, then phone hotspots; hotel Wi-Fi disabled); see `device/fog_app/README.md`.
+(laptop hotspot, then phone hotspots; hotel Wi-Fi disabled); see `backend/arduino/fog_app/README.md`.
 
 **App (runs on a phone in Expo Go against the board; the team reports it works, auto tempo not yet tried worn).**
-Expo SDK 57, tabs Home, My data and Settings, in `app/`, redesigned 2026-09-20 for older wearers with a tremor
+Expo SDK 57, tabs Home, My data and Settings, in `frontend/`, redesigned 2026-09-20 for older wearers with a tremor
 (Nunes et al. 2015: 14 mm targets, taps not drags, nothing timed, little per screen; Dexcom-style single status):
 Home shows one status and one button and no numbers, a cue takes the screen over with a beat that pulses with
 the click and one large STOP, the STOP verdict card has no countdown, setup lives under Settings > Advanced.
@@ -91,7 +96,7 @@ balanced preset, so it can disagree with the real cue; `LED_BUILTIN` polarity is
 only 10/12 of our own simulated freezes.
 
 Not done: a worn test of auto tempo and of the demo screen; a stop-and-start session from a third person (the
-stop rule is provisional); the C port (`device/detector/`, deferred by ADR 0002).
+stop rule is provisional); the C port (`backend/arduino/detector/`, deferred by ADR 0002).
 
 ## The detector (v3: recency-weighted window + stop rule; port this)
 
@@ -112,7 +117,7 @@ frames had `loco > 10000` (walking gate); hold at least 10 frames; keep playing 
 **The gate only controls cue start, never continuation** (a long freeze has no recent walking; gating
 continuation dropped sensitivity to 0.28).
 
-Reference: `analysis/src/streaming_detector.py`. It matches the batch code on all 35,405 Daphnet
+Reference: `backend/api/streaming_detector.py`. It matches the batch code on all 35,405 Daphnet
 frames with zero cue mismatches, and float32 changes no decisions (v2 re-verified), so single-precision on the
 STM32 is safe. The ring buffer must be read in time order now (v1 could skip that).
 
@@ -298,7 +303,7 @@ Known from bring-up: IMU on Wire2 (A4/A5), address 0x68; each `Serial.print()` r
 separate message (batch output into one print); the chip can drop back to sleep after a power dip and must
 be re-initialised. The GY-9250 breakout reports WHO_AM_I 0x68: an MPU6050/9150-class chip, not an MPU-9250 (same family as Mendeley's sensor).
 
-Bridge/App Lab API is documented in `device/README.md`; `notify`/`provide` in both directions and the `web_ui`
+Bridge/App Lab API is documented in `backend/arduino/README.md`; `notify`/`provide` in both directions and the `web_ui`
 brick are exercised by `fog_app` on the board.
 On Windows, a Python HTTP server bound to IPv4 only makes every `localhost` request take 2 s (IPv6 tried first);
 `dev_server.py` listens dual-stack for that reason.
@@ -316,4 +321,4 @@ CMSIS-DSP `arm_rfft_fast_f32` uses the same unnormalised FFT convention as NumPy
    phone is possible (the kernel has NCM/ECM gadget modules; needs the board's sudo password).
 4. Feature candidates, in the order proposed: medication-timing log (freezes against hours since the last dose),
    adaptive cue (escalate when walking has not resumed), gait summary from the cadence tracker.
-5. `device/detector/`: the C port, still the plan of record (ADR-0002), no longer on the demo path.
+5. `backend/arduino/detector/`: the C port, still the plan of record (ADR-0002), no longer on the demo path.

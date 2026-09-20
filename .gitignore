@@ -2,15 +2,15 @@
 data/*/raw/
 data/*/clean/
 
-# recordings made through the web app
-device/fog_app/data/
+# recordings made through the board's web page, when run on a laptop
+backend/arduino/fog_app/data/
 
-# python (analysis/)
+# python (backend/)
 __pycache__/
 .venv/
 *.joblib
 
-# javascript (app/)
+# javascript (frontend/)
 node_modules/
 .expo/
 dist/
@@ -19,7 +19,7 @@ web-build/
 .env
 .env.*.local
 
-# arduino / C (device/)
+# arduino / C (backend/arduino/)
 build/
 *.o
 *.elf
