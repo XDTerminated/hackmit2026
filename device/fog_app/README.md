@@ -94,6 +94,22 @@ What to look at first:
 
 After editing files, copy them again and restart: `app stop`, then `app start`.
 
+### Wi-Fi
+
+The board rejoins a network it knows, and the phone and laptop must be on that same network. Two things
+have gone wrong here before:
+
+- **It joined a different network from the phone.** With equal priorities NetworkManager picks the network
+  it used last, which at a venue is often a guest network. The priorities are now set on the board (over USB,
+  `adb shell`): `nmcli connection modify "iPhone 16 Pro" connection.autoconnect-priority 100`, the other
+  hotspot 90, HackMIT 50, and `nmcli connection modify "@Hyatt_WiFi" connection.autoconnect no`. To move it by
+  hand: `nmcli connection up "<network name>"`. To see where it is: `nmcli -t -f ACTIVE,SSID dev wifi`.
+- **Guest and hotel networks do not work**: they need a browser login the board cannot do, and they block
+  devices from reaching each other. Use a phone hotspot. Measured on one: API median 29 ms, a cue message
+  reaches a client in about 50 ms.
+
+The address changes with the network; `arduino.local` does not. `deploy.sh` prints both.
+
 ### Running from a power bank with no laptop
 
 The app is set as the board's startup app (`arduino-app-cli properties set default user:fog_app`, or the

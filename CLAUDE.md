@@ -39,7 +39,10 @@ live charts, sample-rate check, labelled recording. If the API cannot start, the
 `streaming_detector.py` with the app, and forwards both ports to localhost. The app is the board's startup app.
 Verified on the board: 64.0 Hz, no lost samples with both consumers, gravity 1047 mg, a still board reads
 1 mg^2, API reachable over USB and over the HackMIT Wi-Fi, WebSocket cue messages, no debug route.
-`device/bringup/` is the original wiring-test sketch.
+`device/bringup/` is the original wiring-test sketch. Wi-Fi: the board must share a network with the phone; a phone
+hotspot works (API median 29 ms, cue message ~50 ms), guest/hotel networks do not (captive portal, client
+isolation). Auto-join priorities are set on the board with nmcli (hotspots first, hotel Wi-Fi disabled); see
+`device/fog_app/README.md`.
 
 **App (type-checks and bundles; not yet exercised on a phone against the board).** Expo SDK 57, screens Now,
 History and Settings, in `app/`. `src/useDevice.ts` owns the link: one WebSocket, a full REST sync on every
