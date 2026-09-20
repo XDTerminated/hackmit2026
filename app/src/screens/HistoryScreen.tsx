@@ -2,12 +2,12 @@
 // how many today, how the fortnight looks, and -- the only chart that argues the device
 // works -- how often walking resumed after a cue.
 
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { FogEvent } from '../api';
 import { Card, DayBars, Label } from '../components/ui';
 import { Theme } from '../theme';
-import { useDevice } from '../useDevice';
+import { Device } from '../useDevice';
 
 function dayKey(iso: string) {
   return iso.slice(0, 10);
@@ -18,7 +18,7 @@ export function HistoryScreen({
   device,
 }: {
   theme: Theme;
-  device: ReturnType<typeof useDevice>;
+  device: Device;
 }) {
   const { summary, events, setFeedback } = device;
   const { width } = useWindowDimensions();
@@ -37,7 +37,7 @@ export function HistoryScreen({
     return events.filter((event) => dayKey(event.start) === selected);
   }, [events, selected]);
 
-  const chartWidth = width - theme.space(6);
+  const chartWidth = width - theme.space(8); // screen padding 2 + card padding 2, on both sides
 
   return (
     <ScrollView

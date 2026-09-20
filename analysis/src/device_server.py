@@ -266,6 +266,11 @@ class Device:
     manual_until: datetime | None = None
     clients: set[WebSocket] = field(default_factory=set)
     sensor_ok: bool = True
+    # The cue playing right now, as the app needs it: event_id, output, tempo_bpm, trigger.
+    active_cue: dict | None = None
+    # Set when the wearer stops an automatic cue. The detector's own cue output stays on for its
+    # hold time, so without this the next frame would start a new cue half a second later.
+    wearer_stopped: bool = False
     # Called with (on, tempo_bpm) when the device's own buzzer should start or stop.
     cue_hook: Callable[[bool, int], None] | None = None
 
@@ -312,11 +317,13 @@ class Device:
             "sample_rate_hz": round(self.measured_rate_hz, 2),
             "state": self.state,
             "cue_active": self.cue_active,
+            "cue": self.active_cue,
             "paused_until": iso(self.paused_until) if self.paused_until else None,
             "events_today": self.count_today(),
             "uptime_s": int((now_utc() - self.started_at).total_seconds()),
             "firmware": FIRMWARE,
             "source": self.source.name,
+            "replay": not self.source.live,
         }
 
     def count_today(self) -> int:
@@ -352,16 +359,10 @@ class Device:
         self.cue_active = True
         self.open_event = OpenEvent(id=cursor.lastrowid, started=self.now(),
                                     peak_fi=freeze_index, trigger=trigger)
+        self.active_cue = {"event_id": self.open_event.id, "output": output,
+                           "tempo_bpm": self.settings["tempo_bpm"], "trigger": trigger}
         self.drive_buzzer(True, output)
-        await self.broadcast(
-            "cue_started",
-            {
-                "event_id": self.open_event.id,
-                "output": output,
-                "tempo_bpm": self.settings["tempo_bpm"],
-                "trigger": trigger,
-            },
-        )
+        await self.broadcast("cue_started", self.active_cue)
 
     async def stop_cue(self, reason: str, feedback: str | None = None) -> None:
         if not self.cue_active or self.open_event is None:
@@ -375,6 +376,7 @@ class Device:
         )
         self.db.commit()
         self.cue_active = False
+        self.active_cue = None
         self.manual_until = None
         event.watching_resume = True
         self.drive_buzzer(False)
@@ -395,6 +397,12 @@ class Device:
         row = self.db.execute("SELECT * FROM events WHERE id = ?", (event.id,)).fetchone()
         if row:
             await self.broadcast("event_created", {"event": event_row_to_json(row)})
+
+    def phone_disconnected(self) -> None:
+        """A cue playing on the phone must not go silent because the phone went away."""
+        if self.cue_active and self.active_cue and self.active_cue["output"] == "phone" and not self.clients:
+            self.active_cue["output"] = "buzzer"
+            self.drive_buzzer(True, "buzzer")
 
     # -- the loop ---------------------------------------------------------
     async def run(self) -> None:
@@ -456,7 +464,9 @@ class Device:
         elif self.cue_active and self.open_event and self.open_event.trigger == "manual":
             self.state = "walking" if walking else "still"
         else:
-            if frame.cue_on and not self.cue_active:
+            if not frame.cue_on:
+                self.wearer_stopped = False
+            if frame.cue_on and not self.cue_active and not self.wearer_stopped:
                 await self.start_cue("auto", frame.freeze_index)
             elif not frame.cue_on and self.cue_active and self.open_event.trigger == "auto":
                 await self.stop_cue("finished")
@@ -604,9 +614,14 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
         feedback = body.get("feedback")
         if feedback not in (None, "real", "false_alarm"):
             raise HTTPException(400, "feedback must be 'real' or 'false_alarm'")
-        event_id = device.open_event.id if device.open_event else None
+        # Only a cue that is actually playing can be stopped and judged. open_event lingers after a
+        # cue ends, so answering with its id here would let the app mark an older event by mistake.
+        if not device.cue_active:
+            return {"stopped": False, "event_id": None}
+        event = device.open_event
+        device.wearer_stopped = event.trigger == "auto"
         await device.stop_cue("stopped_by_user", feedback)
-        return {"stopped": True, "event_id": event_id}
+        return {"stopped": True, "event_id": event.id}
 
     @app.post(api + "/cue/test")
     async def cue_test():
@@ -754,6 +769,7 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
             pass
         finally:
             device.clients.discard(socket)
+            device.phone_disconnected()
 
     return app
 

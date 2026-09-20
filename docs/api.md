@@ -47,8 +47,10 @@ device rejects a change that would silence both.
 
 `cue_output: "phone"` is for demos and for wearers who cannot hear the piezo through clothing. The
 app plays the beat on receiving `cue_started` (below) and stops on `cue_stopped`. **If no app is
-connected when a cue starts, the device falls back to the buzzer**, because a setting must never
-leave the wearer with no cue; `cue_started.output` says which one actually played.
+connected when a cue starts, or the last app disconnects while one is playing, the device plays it on
+the buzzer**, because a setting must never leave the wearer with no cue; `cue.output` says which one is
+playing. The app closes its connection when it goes to the background (a phone cannot keep a beat with
+its timers suspended), which hands the cue to the buzzer in the same way.
 
 ### Sensitivity presets
 
@@ -73,7 +75,7 @@ are recordings from the real sensor.
 | request | body | effect |
 |---|---|---|
 | `POST /cue/start` | `{"seconds": 10}` (3 to 60) | wearer-triggered metronome, independent of detection. Logged as an event with `trigger: "manual"` |
-| `POST /cue/stop` | | stop whatever cue is playing |
+| `POST /cue/stop` | `{"feedback": "false_alarm"}` (optional) | stop the cue that is playing and optionally record the wearer's verdict on it. Answers `{"stopped": true, "event_id": n}`, or `{"stopped": false, "event_id": null}` when nothing was playing, so a late STOP can never mark an older event. After the wearer stops an automatic cue, no new one starts until the detector has let go of that freeze |
 | `POST /pause` | `{"minutes": 15}` (1 to 240) | suspend automatic detection (sitting in a car, at dinner). Resumes by itself |
 | `POST /resume` | | end a pause early |
 | `POST /cue/test` | | 2 s of the current cue settings, for setup |
@@ -90,12 +92,19 @@ are recordings from the real sensor.
   "sample_rate_hz": 64.0,
   "state": "walking",
   "cue_active": false,
+  "cue": null,
   "paused_until": null,
   "events_today": 7,
   "uptime_s": 5321,
-  "firmware": "0.1.0"
+  "firmware": "0.1.0",
+  "source": "bridge",
+  "replay": false
 }
 ```
+
+`cue` is the cue playing right now, `{"event_id", "output", "tempo_bpm", "trigger"}` (the same fields as the
+`cue_started` message), or `null`. It lets an app that connects in the middle of a cue show STOP and join the
+beat. `replay` is true when the server replays a recording instead of reading the sensor; `source` names it.
 
 `state` is one of `"still"`, `"walking"`, `"freeze_detected"`. `sample_rate_hz` is measured, not
 nominal: if it drifts from 64 the detector's frequency bands are wrong, so the app should warn.

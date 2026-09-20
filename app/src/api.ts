@@ -5,7 +5,12 @@
 // The UNO Q on the HackMIT network. It changes with the network: set it in Settings on the phone.
 export const DEFAULT_HOST = '10.189.75.80:8000';
 
-export type DeviceState = 'still' | 'walking' | 'freeze_detected';
+type DeviceState = 'still' | 'walking' | 'freeze_detected';
+
+export type Feedback = 'real' | 'false_alarm';
+
+// The cue that is playing, as sent in `status.cue` and in the `cue_started` message.
+export type LiveCue = { event_id: number | null; output: string; tempo_bpm: number; trigger: string };
 
 export type Status = {
   device_time: string;
@@ -13,11 +18,13 @@ export type Status = {
   sample_rate_hz: number;
   state: DeviceState;
   cue_active: boolean;
+  cue: LiveCue | null;
   paused_until: string | null;
   events_today: number;
   uptime_s: number;
   firmware: string;
   source?: string;
+  replay?: boolean; // true when the server replays a recording instead of reading the sensor
 };
 
 export type FogEvent = {
@@ -29,7 +36,7 @@ export type FogEvent = {
   cue: { sound: boolean; vibration: boolean; output: string; tempo_bpm: number };
   walking_resumed_s: number | null;
   sensitivity: string;
-  feedback: null | 'real' | 'false_alarm';
+  feedback: Feedback | null;
 };
 
 export type Settings = {
@@ -59,11 +66,24 @@ export type Summary = { days: DaySummary[]; walking_resumed_rate: number | null 
 
 export type LiveMessage =
   | ({ type: 'status'; device_time: string } & Status)
-  | { type: 'cue_started'; device_time: string; event_id: number | null; output: string; tempo_bpm: number; trigger: string }
+  | ({ type: 'cue_started'; device_time: string } & LiveCue)
   | { type: 'cue_stopped'; device_time: string; event_id: number | null; reason: string }
   | { type: 'event_created'; device_time: string; event: FogEvent };
 
 const TIMEOUT_MS = 6000;
+const HISTORY_DAYS = 14;
+
+// FastAPI answers errors as {"detail": "..."}; show that sentence rather than the raw body.
+async function problemText(response: Response) {
+  const body = await response.text();
+  try {
+    const detail = JSON.parse(body).detail;
+    if (typeof detail === 'string') return detail;
+  } catch {
+    // not JSON: fall through to the raw text
+  }
+  return `${response.status}: ${body.slice(0, 200)}`;
+}
 
 export class DeviceClient {
   constructor(public host: string) {}
@@ -85,11 +105,12 @@ export class DeviceClient {
         signal: controller.signal,
         headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
       });
-      if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(`${response.status}: ${detail.slice(0, 200)}`);
-      }
+      if (!response.ok) throw new Error(await problemText(response));
       return (await response.json()) as T;
+    } catch (problem) {
+      // fetch reports a timeout as a bare "Aborted", which tells the wearer nothing.
+      if (controller.signal.aborted) throw new Error('The device did not answer.');
+      throw problem;
     } finally {
       clearTimeout(timer);
     }
@@ -97,14 +118,18 @@ export class DeviceClient {
 
   getStatus = () => this.request<Status>('/status');
   getSettings = () => this.request<Settings>('/settings');
-  getEvents = (limit = 200) => this.request<{ events: FogEvent[] }>(`/events?limit=${limit}`);
-  getSummary = (days = 14) => this.request<Summary>(`/events/summary?days=${days}`);
+  // Both cover the same HISTORY_DAYS, so every bar in the chart has its events behind it.
+  getEvents = () => {
+    const since = new Date(Date.now() - HISTORY_DAYS * 86_400_000).toISOString().replace(/\.\d+Z$/, 'Z');
+    return this.request<{ events: FogEvent[] }>(`/events?since=${since}&limit=500`);
+  };
+  getSummary = () => this.request<Summary>(`/events/summary?days=${HISTORY_DAYS}`);
 
   patchSettings = (patch: Partial<Settings>) =>
     this.request<Settings>('/settings', { method: 'PATCH', body: JSON.stringify(patch) });
 
   // The STOP button: stops the cue and marks the event, in one call (docs/api.md).
-  stopCue = (feedback?: 'false_alarm' | 'real') =>
+  stopCue = (feedback?: Feedback) =>
     this.request<{ stopped: boolean; event_id: number | null }>('/cue/stop', {
       method: 'POST',
       body: JSON.stringify(feedback ? { feedback } : {}),
@@ -120,7 +145,7 @@ export class DeviceClient {
 
   resume = () => this.request<Status>('/resume', { method: 'POST', body: '{}' });
 
-  setFeedback = (id: number, feedback: 'false_alarm' | 'real' | null) =>
+  setFeedback = (id: number, feedback: Feedback | null) =>
     this.request<FogEvent>(`/events/${id}`, {
       method: 'PATCH',
       body: JSON.stringify({ feedback }),
@@ -132,6 +157,4 @@ export class DeviceClient {
       method: 'POST',
       body: JSON.stringify({ now: new Date().toISOString().replace(/\.\d+Z$/, 'Z') }),
     });
-
-  forceFreeze = () => this.request<unknown>('/debug/freeze', { method: 'POST', body: '{}' });
 }

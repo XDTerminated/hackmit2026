@@ -45,7 +45,8 @@ That route exists only in the replay server, never on the board.
 ```
 App.tsx                three tabs and the connection banner; no navigation library
 src/api.ts             typed client for docs/api.md
-src/useDevice.ts       the device link: REST sync, live WebSocket, reconnection, actions
+src/useDevice.ts       the device link: live WebSocket, a REST sync on every connect, reconnection, and
+                       every action (failures are shown under the banner on all tabs)
 src/theme.ts           colours; nothing in the palette shouts
 src/components/ui.tsx  cards, buttons, banner, and the stacked bar chart (react-native-svg)
 src/screens/           Now, History, Settings
@@ -53,8 +54,9 @@ src/screens/           Now, History, Settings
 
 ## The three screens
 
-- **Now**: connection, what the device is doing, and when a cue plays, one full-width STOP that
-  also marks the event a false alarm, with an undo. Plus a wearer-triggered beat.
+- **Now**: connection, what the device is doing, and when a cue plays, one large STOP. Stopping an
+  automatic cue also marks the event a false alarm, with a 20 s undo; a beat the wearer asked for is just
+  stopped. Also says so when the sensor has gone quiet or detection is off. Plus a wearer-triggered beat.
 - **History**: cues today against yesterday, a 14-day stacked bar chart, and the share of cues
   followed by walking resuming — the only number that argues the device works. Tap a bar for that
   day's cues; tap a cue to mark it a false alarm.

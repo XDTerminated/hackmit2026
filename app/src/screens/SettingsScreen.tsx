@@ -6,13 +6,44 @@ import { ScrollView, Switch, Text, TextInput, View } from 'react-native';
 import { Settings } from '../api';
 import { Button, Card, Label } from '../components/ui';
 import { Theme } from '../theme';
-import { useDevice } from '../useDevice';
+import { Device } from '../useDevice';
 
 const SENSITIVITY: { key: Settings['sensitivity']; title: string; note: string }[] = [
-  { key: 'catch_more', title: 'Catch more', note: '93% of freezes caught, ~58 false cues an hour' },
-  { key: 'balanced', title: 'Balanced', note: '91% caught, ~47 false cues an hour' },
-  { key: 'fewer_alerts', title: 'Fewer alerts', note: '79% caught, ~19 false cues an hour' },
+  { key: 'catch_more', title: 'Catch more', note: '96% of freezes caught, ~61 false cues an hour. Fastest to respond' },
+  { key: 'balanced', title: 'Balanced', note: '95% caught, ~51 false cues an hour' },
+  { key: 'fewer_alerts', title: 'Fewer false cues', note: '84% caught, ~26 false cues an hour' },
 ];
+
+// A setting that is on or off. The switch is named for screen readers by the row's title.
+function ToggleRow({
+  theme,
+  title,
+  note,
+  value,
+  onChange,
+}: {
+  theme: Theme;
+  title: string;
+  note?: string;
+  value: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <Row
+      theme={theme}
+      title={title}
+      note={note}
+      right={
+        <Switch
+          value={value}
+          onValueChange={onChange}
+          accessibilityLabel={title}
+          trackColor={{ true: theme.c.accent, false: theme.c.border }}
+        />
+      }
+    />
+  );
+}
 
 function Row({
   theme,
@@ -51,9 +82,9 @@ export function SettingsScreen({
   device,
 }: {
   theme: Theme;
-  device: ReturnType<typeof useDevice>;
+  device: Device;
 }) {
-  const { settings, updateSettings, host, setHost, client, sync, status, error } = device;
+  const { settings, updateSettings, host, status } = device;
   const [draftHost, setDraftHost] = useState(host);
 
   return (
@@ -83,16 +114,13 @@ export function SettingsScreen({
           }}
         />
         <View style={{ marginTop: theme.space(1) }}>
-          <Button theme={theme} title="Connect and test" onPress={() => { setHost(draftHost.trim()); sync(); }} />
+          <Button theme={theme} title="Connect and test" onPress={() => device.connectTo(draftHost)} />
         </View>
         {status ? (
           <Text style={{ ...theme.font.label, color: theme.c.muted, marginTop: theme.space(1) }}>
             Firmware {status.firmware} · {status.sample_rate_hz} Hz · up{' '}
             {Math.round(status.uptime_s / 60)} min
           </Text>
-        ) : null}
-        {error ? (
-          <Text style={{ ...theme.font.label, color: theme.c.text, marginTop: 4 }}>{error}</Text>
         ) : null}
       </Card>
 
@@ -101,23 +129,18 @@ export function SettingsScreen({
           <Card theme={theme}>
             <Label theme={theme}>Sensitivity</Label>
             <Text style={{ ...theme.font.label, color: theme.c.muted, marginTop: 4 }}>
-              Measured on Parkinson's patients in a lab, not on this prototype.
+              Measured on recordings of people with Parkinson's in a lab, not on this prototype.
             </Text>
             {SENSITIVITY.map((option) => {
               const active = settings.sensitivity === option.key;
               return (
                 <View key={option.key} style={{ marginTop: theme.space(1) }}>
-                  <Row
+                  <ToggleRow
                     theme={theme}
                     title={option.title}
                     note={option.note}
-                    right={
-                      <Switch
-                        value={active}
-                        onValueChange={() => updateSettings({ sensitivity: option.key })}
-                        trackColor={{ true: theme.c.accent, false: theme.c.border }}
-                      />
-                    }
+                    value={active}
+                    onChange={() => updateSettings({ sensitivity: option.key })}
                   />
                 </View>
               );
@@ -126,27 +149,23 @@ export function SettingsScreen({
 
           <Card theme={theme}>
             <Label theme={theme}>The cue</Label>
-            <Row
+            <ToggleRow
               theme={theme}
               title="Play on this phone"
               note="Otherwise the buzzer on the device plays it. Only one at a time: two metronomes drift apart."
-              right={
-                <Switch
-                  value={settings.cue_output === 'phone'}
-                  onValueChange={(on) => updateSettings({ cue_output: on ? 'phone' : 'buzzer' })}
-                  trackColor={{ true: theme.c.accent, false: theme.c.border }}
-                />
-              }
+              value={settings.cue_output === 'phone'}
+              onChange={(on) => updateSettings({ cue_output: on ? 'phone' : 'buzzer' })}
             />
             <Row
               theme={theme}
               title={`Tempo — ${settings.tempo_bpm} bpm`}
               note="Set it to a comfortable walking rate, ideally with a physio. Too fast can make gait worse."
               right={
-                <View style={{ flexDirection: 'row', gap: theme.space(1) }}>
+                <View style={{ flexDirection: 'row', gap: theme.space(2) }}>
                   <Button
                     theme={theme}
                     title="−"
+                    label="Slower by 5 beats per minute"
                     onPress={() =>
                       updateSettings({ tempo_bpm: Math.max(60, settings.tempo_bpm - 5) })
                     }
@@ -154,6 +173,7 @@ export function SettingsScreen({
                   <Button
                     theme={theme}
                     title="+"
+                    label="Faster by 5 beats per minute"
                     onPress={() =>
                       updateSettings({ tempo_bpm: Math.min(140, settings.tempo_bpm + 5) })
                     }
@@ -161,59 +181,39 @@ export function SettingsScreen({
                 </View>
               }
             />
-            <Row
+            <ToggleRow
               theme={theme}
               title="Sound"
               note="A click on every beat. Sound and vibration cannot both be off."
-              right={
-                <Switch
-                  value={settings.cue_sound}
-                  onValueChange={(on) => updateSettings({ cue_sound: on })}
-                  trackColor={{ true: theme.c.accent, false: theme.c.border }}
-                />
-              }
+              value={settings.cue_sound}
+              onChange={(on) => updateSettings({ cue_sound: on })}
             />
-            <Row
+            <ToggleRow
               theme={theme}
               title="Vibration"
               note="A pulse on every beat: this phone when the cue plays here, otherwise the device's motor."
-              right={
-                <Switch
-                  value={settings.cue_vibration}
-                  onValueChange={(on) => updateSettings({ cue_vibration: on })}
-                  trackColor={{ true: theme.c.accent, false: theme.c.border }}
-                />
-              }
+              value={settings.cue_vibration}
+              onChange={(on) => updateSettings({ cue_vibration: on })}
             />
             <View style={{ marginTop: theme.space(1) }}>
-              <Button theme={theme} title="Test the cue" onPress={() => client.testCue().catch(() => {})} />
+              <Button theme={theme} title="Test the cue" onPress={device.testCue} />
             </View>
           </Card>
 
           <Card theme={theme}>
             <Label theme={theme}>Detection</Label>
-            <Row
+            <ToggleRow
               theme={theme}
               title="Detection on"
-              right={
-                <Switch
-                  value={settings.detection_enabled}
-                  onValueChange={(on) => updateSettings({ detection_enabled: on })}
-                  trackColor={{ true: theme.c.accent, false: theme.c.border }}
-                />
-              }
+              value={settings.detection_enabled}
+              onChange={(on) => updateSettings({ detection_enabled: on })}
             />
-            <Row
+            <ToggleRow
               theme={theme}
               title="Only cue after walking"
               note="Off: can catch freezes when starting to walk, but will also beep while standing."
-              right={
-                <Switch
-                  value={settings.walking_gate}
-                  onValueChange={(on) => updateSettings({ walking_gate: on })}
-                  trackColor={{ true: theme.c.accent, false: theme.c.border }}
-                />
-              }
+              value={settings.walking_gate}
+              onChange={(on) => updateSettings({ walking_gate: on })}
             />
             <View style={{ flexDirection: 'row', gap: theme.space(1), marginTop: theme.space(1) }}>
               {[15, 60].map((minutes) => (
@@ -221,7 +221,7 @@ export function SettingsScreen({
                   <Button
                     theme={theme}
                     title={`Pause ${minutes} min`}
-                    onPress={() => client.pause(minutes).then(sync).catch(() => {})}
+                    onPress={() => device.pause(minutes)}
                   />
                 </View>
               ))}

@@ -20,38 +20,48 @@ Polyglot monorepo; each part has its own README and tooling, and the parts share
   sensitivity presets with measured trade-offs, actions, status, events. Change it there first, then in code.
 - `data/<dataset>/raw` and `/clean` are gitignored. See README.md for how to fetch them.
 
-## Status (2026-09-19)
+## Status (2026-09-19, branch `board-integration`)
 
-Done: Daphnet cleaning, Freeze Index baseline, cue-logic simulation, streaming reference detector,
-test vectors, Mendeley download and cleaning, external validation on Mendeley, gyro experiment.
-Hardware: IMU bring-up works on the board (`device/bringup/`); `device/imu_stream/` (64 Hz CSV streamer)
-is written but not yet compiled or run; `analysis/src/check_recording.py` validates a capture from it.
-`device/fog_app/` is an App Lab app (sketch -> Bridge -> Python detector -> web page on port 7000 over Wi-Fi, with
-labelled recording). It runs on the board as of 2026-09-19: 64.0 Hz over the Bridge with no lost samples, gravity
-reads 1047 mg, a still board reads 1 mg^2. Deploy over USB with `bash device/fog_app/deploy.sh` (uses App Lab's adb;
-also forwards the page to http://localhost:7000). It is set as the board's startup app, so it runs from a power
-bank with no laptop. Not yet tested worn on a leg.
+**Analysis (works).** Daphnet and Mendeley cleaning, Freeze Index baseline, cue-logic simulation, latency, gyro,
+calibration and random-forest experiments, the streaming reference detector and the firmware test vectors.
+Shared evaluation code lives in `baseline_fi.py` (`window_features`, `detect`/`debounced`, `grid_counts`,
+`loso_cell`, `score_subject`, `summary_row`, `event_metrics`); the experiment scripts only add what is specific
+to them. `streaming_detector.py` holds the one detector (`StreamingDetector`) and `SampleClock` (delivered
+sample rate and lost samples); `--verify` checks it against the batch code, `--check-vectors` against
+`test_vectors/`.
 
-`analysis/src/device_server.py` (Khai) is the real Linux-side server: detector loop, SQLite event log, REST + WebSocket
-from `docs/api.md`, with a `SampleSource` seam; so far it has only run on CSV replay. `app/` is an Expo SDK 57 app
-(Now, History, Settings) working against it, with the phone audio cue. `CONTEXT.md` is the glossary (wearer, cue,
-event, false alarm vs false cue); ADR 0001 and 0002 record detection-on-device and Python-not-C for the prototype.
-Branch `board-integration` merges that work with the board app.
+**Device (runs on the board).** `device/fog_app/` is the App Lab app: the sketch samples the IMU at 64 Hz and
+pushes each sample over the Bridge; `python/main.py` feeds two consumers. Port 8000 is the device API
+(`analysis/src/device_server.py`, Khai's server: presets and settings, SQLite event log, REST + WebSocket); it
+owns the cue and drives the buzzer at the wearer's tempo. Port 7000 is the diagnostics page (`fog_core.py`):
+live charts, sample-rate check, labelled recording. If the API cannot start, the page's detector drives the cue.
+`bash device/fog_app/deploy.sh` deploys over USB (App Lab's adb), ships `device_server.py` and
+`streaming_detector.py` with the app, and forwards both ports to localhost. The app is the board's startup app.
+Verified on the board: 64.0 Hz, no lost samples with both consumers, gravity 1047 mg, a still board reads
+1 mg^2, API reachable over USB and over the HackMIT Wi-Fi, WebSocket cue messages, no debug route.
+`device/bringup/` is the original wiring-test sketch.
 
-On `board-integration`: `device_server.py` has a `LiveSource` (samples pushed from another thread, awaited without
-blocking the API), a cue hook that drives the buzzer with the wearer's tempo, `start_on_board()`, and an optional
-debug route; pandas/scipy are optional imports so the board does not need them. `device/fog_app/python/main.py`
-feeds both the device API (port 8000, owns the cue) and the diagnostics page (port 7000), falling back to the page's
-detector if the API cannot start. `deploy.sh` ships `device_server.py` + `streaming_detector.py` to the board. The
-phone cue now has vibration (Android `Vibration`, iOS haptic tap) and a Sound toggle. All tested on a laptop with a
-fake sensor thread (API answers in 3 ms while live).
+**App (type-checks and bundles; not yet exercised on a phone against the board).** Expo SDK 57, screens Now,
+History and Settings, in `app/`. `src/useDevice.ts` owns the link: one WebSocket, a full REST sync on every
+connect, reconnection, and every action through one error path shown on all tabs. The phone cue is a click
+and/or a vibration pulse on a drift-corrected beat. `CONTEXT.md` is the glossary; ADR 0001/0002 record
+detection-on-device and Python-not-C for the prototype.
 
-Deployed and verified on the board (2026-09-19 evening): the device API answers on port 8000 over USB forward and
-over the HackMIT Wi-Fi (~120 ms), source `bridge`, 64.0 Hz, no lost samples with both consumers running,
-`websockets` installs itself on first start, the live WebSocket delivers `cue_started`/`cue_stopped`, the debug
-route is absent.
+Behaviour worth knowing (all tested against the server): STOP holds (no new automatic cue until the detector
+lets go of that freeze); a STOP when nothing plays answers `stopped: false`, so it can never mark an older
+event; `status.cue` lets an app that connects mid-cue show STOP; when the last app disconnects or goes to the
+background during a phone cue, the buzzer takes over; STOP silences the phone before it talks to the device.
+On the board the API has no authentication and no CORS; the wildcard CORS rule exists only in laptop replay.
 
-Not done: the app on a real phone against the board; a worn test; the C port.
+Open decisions from the code review, not yet made: day boundaries are UTC on the server but times are shown
+locally (cues after 8 pm Boston time count as tomorrow); "cues today" is all events on Now but excludes false
+alarms on History; the device address is not remembered between launches (needs a storage dependency);
+`app.json` forces light mode although a dark palette exists, and white-on-accent text in that dark palette is
+about 2.2:1; settings switches wait for the device's answer instead of updating optimistically; sensitivity is
+three switches rather than a radio list; the History chart's bars are narrow tap targets with no screen-reader
+alternative.
+
+Not done: a worn test; own labelled recordings; the C port (`device/detector/`, deferred by ADR 0002).
 
 ## The detector (v2, recency-weighted; port this)
 

@@ -15,7 +15,8 @@ always works on its own.
 ```
 sketch/sketch.ino   STM32: IMU at 64 Hz -> Bridge.notify("imu_sample", ...); plays the cue on set_cue()
 python/main.py      Linux: Bridge + WebUI glue (needs the board)
-python/fog_core.py  Linux: detector, live state, labelled recording (plain Python + numpy, no board needed)
+python/fog_core.py  Linux: live state, events and labelled recording for the diagnostics page, around the
+                    shared detector in analysis/src/streaming_detector.py (no board needed)
 assets/             the web page: index.html, app.js, style.css (no external libraries)
 dev_server.py       runs the same page and API on a laptop, replaying recorded data
 app.yaml            App Lab manifest; uses the arduino:web_ui brick
@@ -35,10 +36,10 @@ column, and can be downloaded from the page.
 
 ## What has and has not been tested
 
-Tested on a laptop with `dev_server.py`: the detector copy in `fog_core.py` matches all four
-firmware test vectors frame for frame (`python python/fog_core.py`), every API route, recording
-and download, and a downloaded recording passes through `check_recording.py`. The page was
-rendered and checked in a browser.
+Tested on a laptop with `dev_server.py`: every API route, recording and download, and a downloaded
+recording passes through `check_recording.py`. The page was rendered and checked in a browser. The
+detector is the project's reference implementation, checked against the firmware test vectors with
+`uv run src/streaming_detector.py --check-vectors` in `analysis/`.
 
 Verified on the board (2026-09-19): the sketch compiles and flashes, samples arrive over the Bridge at
 64.0 Hz with none lost, gravity reads 1047 mg (the patient datasets read 1030-1080), a board lying still

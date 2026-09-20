@@ -66,6 +66,9 @@ All constants live in `DetectorParams` in `analysis/src/streaming_detector.py`.
 
 ## Comparing
 
+The Python reference is held to the same files: `uv run src/streaming_detector.py --check-vectors` in
+`analysis/`. Run it after touching the detector; re-export only when a change is intended.
+
 - `cue_on`, `positive` and `armed` should match exactly on all four vectors.
 - `freeze_index`, `total_power`, `loco_power`: allow a relative error of about 2e-3. Float32 in the
   Python reference differs from float64 by at most 3.8e-4, so anything near 1e-2 is a real bug,

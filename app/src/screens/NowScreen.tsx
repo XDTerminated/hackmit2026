@@ -1,13 +1,13 @@
 // The live screen. Calm when nothing is happening; one enormous STOP button when a cue
-// is playing. Stopping a cue also marks it a false alarm, with an undo -- the wearer may
-// have stopped a cue during a real freeze, and that verdict is the only ground truth the
-// device will ever get.
+// is playing. Stopping an automatic cue also marks it a false alarm, with an undo -- the
+// wearer may have stopped a cue during a real freeze, and that verdict is the only ground
+// truth the device will ever get. A beat the wearer asked for is simply stopped.
 
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { Button, Card, Label } from '../components/ui';
 import { Theme } from '../theme';
-import { useDevice } from '../useDevice';
+import { Device } from '../useDevice';
 
 const STATE_TEXT: Record<string, { title: string; note: string }> = {
   still: { title: 'Still', note: 'No walking detected right now.' },
@@ -15,14 +15,10 @@ const STATE_TEXT: Record<string, { title: string; note: string }> = {
   freeze_detected: { title: 'Cueing', note: 'A freeze was detected. Follow the beat.' },
 };
 
-export function NowScreen({
-  theme,
-  device,
-}: {
-  theme: Theme;
-  device: ReturnType<typeof useDevice>;
-}) {
-  const { status, cue, settings, stopCue, client } = device;
+const UNDO_SECONDS = 20; // long enough for someone whose movement is slowed
+
+export function NowScreen({ theme, device }: { theme: Theme; device: Device }) {
+  const { status, cue, settings, stopCue } = device;
   const [undoId, setUndoId] = useState<number | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -30,13 +26,14 @@ export function NowScreen({
     if (undoTimer.current) clearTimeout(undoTimer.current);
   }, []);
 
+  const automatic = cue?.trigger === 'auto';
+
   const onStop = async () => {
-    const id = await stopCue('false_alarm');
-    if (id != null) {
-      setUndoId(id);
-      if (undoTimer.current) clearTimeout(undoTimer.current);
-      undoTimer.current = setTimeout(() => setUndoId(null), 8000);
-    }
+    const id = await stopCue(automatic ? 'false_alarm' : undefined);
+    if (!automatic || id == null) return;
+    setUndoId(id);
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = setTimeout(() => setUndoId(null), UNDO_SECONDS * 1000);
   };
 
   const onUndo = async () => {
@@ -45,9 +42,9 @@ export function NowScreen({
     setUndoId(null);
   };
 
-  const state = status?.state ?? 'still';
-  const copy = STATE_TEXT[state] ?? STATE_TEXT.still;
   const paused = status?.paused_until ? new Date(status.paused_until) > new Date() : false;
+  const watching = settings?.detection_enabled !== false && !paused;
+  const copy = STATE_TEXT[status?.state ?? 'still'] ?? STATE_TEXT.still;
 
   return (
     <ScrollView
@@ -56,14 +53,22 @@ export function NowScreen({
     >
       {cue ? (
         <Card theme={theme} style={{ backgroundColor: theme.c.accentSoft, borderColor: theme.c.accent }}>
-          <Label theme={theme}>Cue playing</Label>
+          <Label theme={theme}>{cue.trigger === 'test' ? 'Testing the cue' : 'Cue playing'}</Label>
           <Text style={{ ...theme.font.title, color: theme.c.text, marginTop: theme.space(0.5) }}>
             {cue.tempoBpm} beats per minute
             {cue.output === 'phone' ? ' · on this phone' : ' · on the device'}
           </Text>
-          <View style={{ marginTop: theme.space(2) }}>
-            <Button theme={theme} kind="solid" title="STOP — this was not a freeze" onPress={onStop} />
-          </View>
+          {cue.trigger === 'test' ? null : (
+            <View style={{ marginTop: theme.space(2) }}>
+              <Button
+                theme={theme}
+                kind="solid"
+                size="large"
+                title={automatic ? 'STOP — this was not a freeze' : 'STOP'}
+                onPress={onStop}
+              />
+            </View>
+          )}
         </Card>
       ) : (
         <Card theme={theme}>
@@ -71,7 +76,9 @@ export function NowScreen({
           <Text style={{ ...theme.font.hero, color: theme.c.text, marginTop: theme.space(0.5) }}>
             {copy.title}
           </Text>
-          <Text style={{ ...theme.font.body, color: theme.c.muted }}>{copy.note}</Text>
+          <Text style={{ ...theme.font.body, color: theme.c.muted }}>
+            {status?.state === 'walking' && !watching ? 'Detection is off.' : copy.note}
+          </Text>
         </Card>
       )}
 
@@ -93,6 +100,25 @@ export function NowScreen({
         </Card>
       ) : null}
 
+      {status && !status.sensor_ok ? (
+        <Card theme={theme} style={{ borderColor: theme.c.accent }}>
+          <Label theme={theme}>Sensor not responding</Label>
+          <Text style={{ ...theme.font.body, color: theme.c.text, marginTop: 4 }}>
+            The device is not getting movement data, so it cannot detect a freeze. Check the sensor's
+            wires and strap.
+          </Text>
+        </Card>
+      ) : null}
+
+      {settings && !settings.detection_enabled ? (
+        <Card theme={theme}>
+          <Label theme={theme}>Detection is off</Label>
+          <Text style={{ ...theme.font.body, color: theme.c.text, marginTop: 4 }}>
+            The device will not start a cue by itself. Turn detection on in Settings.
+          </Text>
+        </Card>
+      ) : null}
+
       {paused ? (
         <Card theme={theme}>
           <Label theme={theme}>Paused</Label>
@@ -100,7 +126,7 @@ export function NowScreen({
             Detection is off until {new Date(status!.paused_until!).toLocaleTimeString()}.
           </Text>
           <View style={{ marginTop: theme.space(1.5) }}>
-            <Button theme={theme} title="Resume now" onPress={() => client.resume().then(device.sync)} />
+            <Button theme={theme} title="Resume now" onPress={device.resume} />
           </View>
         </Card>
       ) : null}
@@ -122,11 +148,7 @@ export function NowScreen({
       </Card>
 
       <View style={{ gap: theme.space(1) }}>
-        <Button
-          theme={theme}
-          title="Start a beat for me"
-          onPress={() => client.startCue(10).catch(() => {})}
-        />
+        <Button theme={theme} title="Start a beat for me" onPress={() => device.startBeat(10)} />
         <Text style={{ ...theme.font.label, color: theme.c.muted, textAlign: 'center' }}>
           Plays the metronome for 10 seconds, whether or not a freeze was detected.
         </Text>

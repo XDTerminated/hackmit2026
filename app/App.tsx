@@ -2,7 +2,7 @@
 // No navigation library: three screens do not need a router.
 
 import { StatusBar } from 'expo-status-bar';
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -47,8 +47,21 @@ function Shell() {
         theme={theme}
         connection={device.connection}
         host={device.host}
-        source={device.status?.source}
+        replaying={device.status?.replay ? device.status.source : undefined}
       />
+      {device.error ? (
+        <Text
+          accessibilityRole="alert"
+          style={{
+            ...theme.font.label,
+            color: theme.c.text,
+            paddingHorizontal: theme.space(2),
+            paddingBottom: theme.space(1),
+          }}
+        >
+          {device.error}
+        </Text>
+      ) : null}
       <View style={{ flex: 1 }}>
         {tab === 'Now' ? <NowScreen theme={theme} device={device} /> : null}
         {tab === 'History' ? <HistoryScreen theme={theme} device={device} /> : null}
@@ -68,7 +81,9 @@ function Shell() {
             <Pressable
               key={name}
               onPress={() => setTab(name)}
-              style={{ flex: 1, paddingVertical: theme.space(1.5), alignItems: 'center' }}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+              style={{ flex: 1, minHeight: 56, justifyContent: 'center', alignItems: 'center' }}
             >
               <Text
                 style={{

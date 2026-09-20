@@ -16,7 +16,7 @@ const CLICK = require('../assets/click.wav');
 // Long enough to feel through a pocket, short enough to read as a beat at 140 bpm.
 const ANDROID_PULSE_MS = 70;
 
-export type CueChannels = { sound: boolean; vibration: boolean };
+type CueChannels = { sound: boolean; vibration: boolean };
 
 function pulse() {
   if (Platform.OS === 'android') {
@@ -45,23 +45,33 @@ export function useMetronome(active: boolean, bpm: number, channels: CueChannels
   useEffect(() => {
     if (!active) return;
 
-    const tick = () => {
-      try {
-        if (channelsRef.current.sound) {
-          playerRef.current.seekTo(0);
-          playerRef.current.play();
-        }
-        if (channelsRef.current.vibration) pulse();
-      } catch {
-        // a missed beat is better than a crashed cue
+    const beat = () => {
+      if (channelsRef.current.sound) {
+        // seekTo is asynchronous: play only once the rewind has landed, and never let a failed
+        // click take the cue down with it.
+        const player = playerRef.current;
+        Promise.resolve(player.seekTo(0))
+          .then(() => player.play())
+          .catch(() => {});
       }
+      if (channelsRef.current.vibration) pulse();
     };
 
+    // Each beat is scheduled against the clock, not against the previous timer. setInterval
+    // re-arms from whenever the last callback happened to run, so lateness accumulates and the
+    // tempo drifts slow; a steady beat is the whole mechanism.
+    const period = 60000 / bpm;
+    let next = performance.now();
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      beat();
+      next += period;
+      timer = setTimeout(tick, Math.max(0, next - performance.now()));
+    };
     tick(); // the first beat lands immediately, not one interval late
-    const period = Math.max(200, Math.round(60000 / (bpm || 100)));
-    const timer = setInterval(tick, period);
+
     return () => {
-      clearInterval(timer);
+      clearTimeout(timer);
       Vibration.cancel();
     };
   }, [active, bpm]);

@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "fogapp-scaffold",
-    "slug": "fogapp-scaffold",
+    "name": "fog-cue",
+    "slug": "fog-cue",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",

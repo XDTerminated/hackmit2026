@@ -47,19 +47,19 @@ export function ConnectionBanner({
   theme,
   connection,
   host,
-  source,
+  replaying,
 }: {
   theme: Theme;
   connection: Connection;
   host: string;
-  source?: string;
+  replaying?: string; // name of the recording, when the server is replaying one instead of reading the sensor
 }) {
   if (connection === 'online') {
     return (
       <View style={{ paddingHorizontal: theme.space(2), paddingBottom: theme.space(1) }}>
         <Text style={{ ...theme.font.label, color: theme.c.muted }}>
           Connected to {host}
-          {source ? ` · replaying ${source}` : ''}
+          {replaying ? ` · replaying ${replaying}` : ''}
         </Text>
       </View>
     );
@@ -186,16 +186,26 @@ export function Button({
   title,
   onPress,
   kind = 'quiet',
+  size = 'normal',
+  label,
 }: {
   theme: Theme;
   title: string;
   onPress: () => void;
   kind?: 'quiet' | 'solid';
+  size?: 'normal' | 'large'; // large: a target a trembling hand cannot miss
+  label?: string; // spoken by a screen reader when the title is a symbol such as "+"
 }) {
+  const large = size === 'large';
   return (
     <Pressable
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label ?? title}
       style={({ pressed }) => ({
+        minHeight: large ? 96 : 48,
+        minWidth: 56,
+        justifyContent: 'center',
         paddingVertical: theme.space(1.5),
         paddingHorizontal: theme.space(2),
         borderRadius: theme.radius,
@@ -209,6 +219,7 @@ export function Button({
       <Text
         style={{
           ...theme.font.body,
+          fontSize: large ? 22 : theme.font.body.fontSize,
           fontWeight: '600',
           color: kind === 'solid' ? '#FFFFFF' : theme.c.text,
         }}
