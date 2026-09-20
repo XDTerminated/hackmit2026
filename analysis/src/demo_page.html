@@ -1,0 +1,300 @@
+<!doctype html>
+<!--
+  What the device sees, for a projector. Served by device_server.py at /demo and fed by
+  GET /api/v1/frames, so it shows the real detector and the real cue, on the board and in laptop replay.
+  Read-only, no libraries (the board may be offline). It polls instead of using the WebSocket because a
+  WebSocket client counts as a connected phone app.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Freeze detector: live</title>
+<style>
+  :root {
+    --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781; --grid: #e4e3df;
+    --walk: #2a78d6; --tremble: #eb6834; --cue: #d03b3b; --cue-soft: #fbe3e1; --calm-soft: #eef1f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781; --grid: #2e2e2b;
+      --walk: #3987e5; --tremble: #d95926; --cue: #e66767; --cue-soft: #3a1f1f; --calm-soft: #22262b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 16px/1.4 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1500px; margin: 0 auto; padding: 16px; display: grid; gap: 16px;
+         grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .card { background: var(--surface); border: 1px solid var(--grid); border-radius: 12px; padding: 16px; }
+  #banner { grid-column: 1 / -1; display: flex; align-items: center; gap: 20px; background: var(--calm-soft); }
+  #banner.cue { background: var(--cue-soft); border-color: var(--cue); }
+  #beat { width: 56px; height: 56px; border-radius: 50%; border: 3px solid var(--muted); flex: none; }
+  #banner.cue #beat { border-color: var(--cue); }
+  #beat.on { background: var(--cue); }
+  #state { font-size: clamp(28px, 4.5vw, 60px); font-weight: 700; line-height: 1.05; }
+  #why { font-size: clamp(15px, 1.6vw, 22px); color: var(--ink-2); }
+  h2 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  .sub { font-size: 13px; color: var(--ink-2); margin: 0 0 8px; }
+  svg { width: 100%; height: auto; display: block; overflow: visible; }
+  svg text { fill: var(--muted); font-size: 12px; }
+  svg text.label { fill: var(--ink); font-size: 13px; }
+  .legend { display: flex; gap: 16px; font-size: 13px; color: var(--ink-2); margin-top: 6px; flex-wrap: wrap; }
+  .swatch { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+  .big { font-size: 40px; font-weight: 700; line-height: 1.1; }
+  .unit { font-size: 15px; font-weight: 400; color: var(--ink-2); }
+  #log { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+  #log li { padding: 6px 0; border-top: 1px solid var(--grid); display: flex; gap: 10px; }
+  #log li:first-child { border-top: 0; }
+  #log time { color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
+  #tip { position: fixed; pointer-events: none; background: var(--surface); border: 1px solid var(--grid); border-radius: 8px;
+         padding: 6px 10px; font-size: 13px; display: none; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+  #offline { color: var(--cue); font-size: 13px; }
+  .side { display: grid; gap: 16px; align-content: start; }
+</style>
+</head>
+<body>
+<main>
+  <section id="banner" class="card" aria-live="polite">
+    <div id="beat" aria-hidden="true"></div>
+    <div><div id="state">Connecting…</div><div id="why"></div></div>
+  </section>
+
+  <div class="side">
+    <section class="card">
+      <h2>Leg movement</h2>
+      <p class="sub">Acceleration at the shin, last 10 seconds (milli-g)</p>
+      <svg id="motion" viewBox="0 0 900 200" role="img" aria-label="Shin acceleration over the last 10 seconds"></svg>
+    </section>
+    <section class="card">
+      <h2>What the detector hears in it</h2>
+      <p class="sub">Strength of the two rhythms, last 60 seconds. Walking is a slow rhythm; a freeze is a fast tremble with the slow one gone.</p>
+      <svg id="bands" viewBox="0 0 900 300" role="img" aria-label="Walking-band and tremble-band power over the last 60 seconds"></svg>
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--walk)"></span>Walking rhythm, 0.5–3 Hz</span>
+        <span><span class="swatch" style="background:var(--tremble)"></span>Tremble, 3–8 Hz</span>
+        <span><span class="swatch" style="background:var(--cue-soft);height:10px;border:1px solid var(--cue)"></span>Cue playing</span>
+      </div>
+    </section>
+  </div>
+
+  <div class="side">
+    <section class="card">
+      <h2>Freeze index</h2>
+      <p class="sub">Tremble ÷ walking rhythm. A cue needs it above the line, after walking, and not while simply stopping.</p>
+      <svg id="meter" viewBox="0 0 400 70" role="img" aria-label="Freeze index"></svg>
+      <div><span class="big" id="fi">–</span> <span class="unit" id="fiNote"></span></div>
+    </section>
+    <section class="card">
+      <h2>Walking pace</h2>
+      <p class="sub">Measured from the strides. The cue plays at this pace, one beat per step.</p>
+      <div><span class="big" id="pace">–</span> <span class="unit">steps a minute</span></div>
+      <div class="unit" id="tempo"></div>
+    </section>
+    <section class="card">
+      <h2>Decisions</h2>
+      <ul id="log"><li><span>Nothing yet.</span></li></ul>
+      <div id="offline"></div>
+    </section>
+  </div>
+</main>
+<div id="tip"></div>
+
+<script>
+const SAMPLE_HZ = 64, FRAME_S = 0.5, MOTION_S = 10, BANDS_S = 60;
+const POWER_RANGE = [1, 1e6];          // mg^2, log axis
+const FI_RANGE = [0.1, 10];            // log axis
+let samples = [], frames = [], thresholds = null, status = null;
+let lastSample = 0, lastFrame = 0, log = [], stopNoted = false, beatTimer = null, beatBpm = 0;
+
+const el = (id) => document.getElementById(id);
+const svgEl = (name, attrs, text) => {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+  for (const key in attrs) node.setAttribute(key, attrs[key]);
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
+const logPos = (value, [low, high]) =>
+  (Math.log10(Math.min(Math.max(value, low), high)) - Math.log10(low)) / (Math.log10(high) - Math.log10(low));
+const clock = () => new Date().toLocaleTimeString([], { hour12: false });
+
+function note(text) {
+  log.unshift({ time: clock(), text });
+  log = log.slice(0, 6);
+  el("log").replaceChildren(...log.map((entry) => {
+    const li = document.createElement("li"), time = document.createElement("time"), span = document.createElement("span");
+    time.textContent = entry.time; span.textContent = entry.text; li.append(time, span); return li;
+  }));
+}
+
+// A decision worth showing: the cue starting or ending, and the stop rule refusing a cue.
+function readDecisions(newFrames) {
+  const backlog = frames.length === 0;   // the first fetch is history: draw it, but announce nothing
+  for (const frame of newFrames) {
+    const previous = !backlog && frames.length ? frames[frames.length - 1] : null;
+    const overLine = thresholds && frame.freeze_index > thresholds.freeze_index
+      && frame.loco_power + frame.freeze_power > thresholds.band_power;
+    if (previous && frame.cue && !previous.cue) note(`Freeze detected: cue started at ${status.cue ? status.cue.tempo_bpm : status.cue_tempo_bpm} beats a minute`);
+    if (previous && !frame.cue && previous.cue) note("Cue ended");
+    if (!backlog && frame.stopping && overLine && !frame.cue && !stopNoted) {
+      note("Normal stop: the index crossed the line, but the movement was dying away. No cue.");
+      stopNoted = true;
+    }
+    if (!frame.stopping && !overLine) stopNoted = false;
+    frames.push(frame);
+  }
+  frames = frames.slice(-BANDS_S / FRAME_S);
+}
+
+function drawMotion() {
+  const svg = el("motion"), W = 900, H = 200, left = 46, bottom = 22, top = 6;
+  svg.replaceChildren();
+  if (!samples.length) return;
+  const values = samples.map((s) => s[1]);
+  const low = Math.min(500, ...values), high = Math.max(2000, ...values);
+  const newest = samples[samples.length - 1][0];
+  const x = (n) => left + (W - left) * (1 + (n - newest) / (MOTION_S * SAMPLE_HZ));
+  const y = (v) => top + (H - top - bottom) * (1 - (v - low) / (high - low));
+  for (const tick of [low, 1000, high]) {
+    svg.append(svgEl("line", { x1: left, x2: W, y1: y(tick), y2: y(tick), stroke: "var(--grid)" }));
+    svg.append(svgEl("text", { x: left - 6, y: y(tick) + 4, "text-anchor": "end" }, Math.round(tick)));
+  }
+  for (const s of [-10, -5, 0]) svg.append(svgEl("text", { x: x(newest + s * SAMPLE_HZ), y: H - 4, "text-anchor": s ? "middle" : "end" }, s ? `${s} s` : "now"));
+  const points = samples.filter((s) => s[0] > newest - MOTION_S * SAMPLE_HZ).map((s) => `${x(s[0]).toFixed(1)},${y(s[1]).toFixed(1)}`);
+  svg.append(svgEl("polyline", { points: points.join(" "), fill: "none", stroke: "var(--ink)", "stroke-width": 1.5, "stroke-linejoin": "round" }));
+}
+
+const bandsGeometry = { W: 900, H: 300, left: 58, right: 120, bottom: 22, top: 8 };
+function bandX(n, newest) {
+  const g = bandsGeometry;
+  return g.left + (g.W - g.left - g.right) * (1 + (n - newest) * FRAME_S / BANDS_S);
+}
+function bandY(power) {
+  const g = bandsGeometry;
+  return g.top + (g.H - g.top - g.bottom) * (1 - logPos(power, POWER_RANGE));
+}
+
+function drawBands() {
+  const svg = el("bands"), g = bandsGeometry;
+  svg.replaceChildren();
+  if (!frames.length) return;
+  const newest = frames[frames.length - 1].n;
+  // Cue periods first, so the lines sit on top of the shading.
+  let start = null;
+  frames.forEach((frame, i) => {
+    if (frame.cue && start === null) start = frame.n;
+    if (start !== null && (!frame.cue || i === frames.length - 1)) {
+      const end = frame.cue ? frame.n : frame.n - 1;
+      svg.append(svgEl("rect", { x: bandX(start - 0.5, newest), width: Math.max(2, bandX(end + 0.5, newest) - bandX(start - 0.5, newest)),
+                                 y: g.top, height: g.H - g.top - g.bottom, fill: "var(--cue-soft)" }));
+      start = null;
+    }
+  });
+  for (const [power, text] of [[10, "10"], [1000, "1,000"], [100000, "100,000"]]) {
+    svg.append(svgEl("line", { x1: g.left, x2: g.W - g.right, y1: bandY(power), y2: bandY(power), stroke: "var(--grid)" }));
+    svg.append(svgEl("text", { x: g.left - 6, y: bandY(power) + 4, "text-anchor": "end" }, text));
+  }
+  svg.append(svgEl("text", { x: g.left - 6, y: g.top + 4, "text-anchor": "end" }, "mg²"));
+  for (const s of [-60, -45, -30, -15, 0]) svg.append(svgEl("text", { x: bandX(newest + s / FRAME_S, newest), y: g.H - 4, "text-anchor": s ? "middle" : "end" }, s ? `${s} s` : "now"));
+  const line = (key, colour) => svg.append(svgEl("polyline", {
+    points: frames.map((f) => `${bandX(f.n, newest).toFixed(1)},${bandY(f[key]).toFixed(1)}`).join(" "),
+    fill: "none", stroke: colour, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+  line("loco_power", "var(--walk)");
+  line("freeze_power", "var(--tremble)");
+  // Direct labels at the newest point, nudged apart when the two lines meet.
+  const last = frames[frames.length - 1];
+  let walkY = bandY(last.loco_power), trembleY = bandY(last.freeze_power);
+  if (Math.abs(walkY - trembleY) < 16) { const mid = (walkY + trembleY) / 2, up = walkY < trembleY ? -8 : 8; walkY = mid + up; trembleY = mid - up; }
+  for (const [yPos, colour, text] of [[walkY, "var(--walk)", "Walking"], [trembleY, "var(--tremble)", "Tremble"]]) {
+    svg.append(svgEl("circle", { cx: g.W - g.right + 10, cy: yPos, r: 4, fill: colour }));
+    svg.append(svgEl("text", { x: g.W - g.right + 20, y: yPos + 4, class: "label" }, text));
+  }
+}
+
+function drawMeter() {
+  const svg = el("meter"), W = 400, left = 4, right = 4, barY = 24, barH = 14;
+  svg.replaceChildren();
+  const x = (v) => left + (W - left - right) * logPos(v, FI_RANGE);
+  svg.append(svgEl("rect", { x: left, y: barY, width: W - left - right, height: barH, rx: 7, fill: "var(--grid)" }));
+  const last = frames[frames.length - 1];
+  if (last) {
+    const over = thresholds && last.freeze_index > thresholds.freeze_index;
+    svg.append(svgEl("rect", { x: left, y: barY, width: Math.max(8, x(last.freeze_index) - left), height: barH, rx: 7,
+                               fill: over ? "var(--tremble)" : "var(--walk)" }));
+  }
+  if (thresholds) {
+    svg.append(svgEl("line", { x1: x(thresholds.freeze_index), x2: x(thresholds.freeze_index), y1: barY - 8, y2: barY + barH + 8, stroke: "var(--ink)", "stroke-width": 2 }));
+    svg.append(svgEl("text", { x: x(thresholds.freeze_index), y: 10, "text-anchor": "middle", class: "label" }, `line: ${thresholds.freeze_index}`));
+  }
+  for (const tick of [0.1, 1, 10]) svg.append(svgEl("text", { x: x(tick), y: 66, "text-anchor": tick === 0.1 ? "start" : tick === 10 ? "end" : "middle" }, tick));
+}
+
+function drawHeadline() {
+  const last = frames[frames.length - 1];
+  const banner = el("banner");
+  let title = "Still", why = "No walking right now.";
+  if (!status || !status.sensor_ok) { title = "No sensor data"; why = "The device is not receiving samples."; }
+  else if (status.cue_active) {
+    const tempo = status.cue ? status.cue.tempo_bpm : status.cue_tempo_bpm;
+    title = status.cue && status.cue.trigger === "manual" ? "Beat requested" : "Freeze detected";
+    why = `Cue playing at ${tempo} beats a minute` + (status.cadence_spm ? ", the wearer's own walking pace." : ".");
+  } else if (last && last.stopping) { title = "Stopping"; why = "Movement is dying away: a normal stop, not a freeze. No cue."; }
+  else if (status.state === "walking") { title = "Walking"; why = "Strong slow rhythm, little tremble. Watching for a freeze."; }
+  banner.classList.toggle("cue", !!(status && status.cue_active));
+  el("state").textContent = title;
+  el("why").textContent = why;
+
+  if (last) {
+    el("fi").textContent = last.freeze_index >= 10 ? last.freeze_index.toFixed(0) : last.freeze_index.toFixed(2);
+    const quiet = thresholds && last.loco_power + last.freeze_power <= thresholds.band_power;
+    el("fiNote").textContent = quiet ? "too little movement to mean anything" : last.freeze_index > (thresholds ? thresholds.freeze_index : 1) ? "above the line" : "below the line";
+  }
+  el("pace").textContent = status && status.cadence_spm ? status.cadence_spm : "–";
+  el("tempo").textContent = status ? (status.cadence_spm ? `Next cue: ${status.cue_tempo_bpm} beats a minute` : `Not measured yet. Next cue: ${status.cue_tempo_bpm} beats a minute (preset)`) : "";
+
+  // A visual metronome at the cue's tempo, for a room that cannot hear the phone.
+  const bpm = status && status.cue_active ? (status.cue ? status.cue.tempo_bpm : status.cue_tempo_bpm) : 0;
+  if (bpm !== beatBpm) {
+    clearInterval(beatTimer); beatBpm = bpm; el("beat").classList.remove("on");
+    if (bpm) {
+      const flash = () => { el("beat").classList.add("on"); setTimeout(() => el("beat").classList.remove("on"), 90); };
+      flash(); beatTimer = setInterval(flash, 60000 / bpm);
+    }
+  }
+}
+
+// Hover on the band chart: the numbers behind the nearest half-second.
+el("bands").addEventListener("mousemove", (event) => {
+  if (!frames.length) return;
+  const box = el("bands").getBoundingClientRect(), g = bandsGeometry;
+  const xView = (event.clientX - box.left) * g.W / box.width, newest = frames[frames.length - 1].n;
+  const frame = frames.reduce((best, f) => Math.abs(bandX(f.n, newest) - xView) < Math.abs(bandX(best.n, newest) - xView) ? f : best);
+  const tip = el("tip");
+  tip.textContent = `${((frame.n - newest) * FRAME_S).toFixed(1)} s · walking ${frame.loco_power.toLocaleString()} mg² · tremble ${frame.freeze_power.toLocaleString()} mg² · index ${frame.freeze_index.toFixed(2)}${frame.cue ? " · cue" : ""}${frame.stopping ? " · stopping" : ""}`;
+  tip.style.display = "block";
+  tip.style.left = Math.min(event.clientX + 12, window.innerWidth - tip.offsetWidth - 8) + "px";
+  tip.style.top = event.clientY + 14 + "px";
+});
+el("bands").addEventListener("mouseleave", () => { el("tip").style.display = "none"; });
+
+async function poll() {
+  try {
+    const response = await fetch(`/api/v1/frames?since_frame=${lastFrame}&since_sample=${lastSample}`, { cache: "no-store" });
+    const data = await response.json();
+    status = data.status; thresholds = data.thresholds;
+    // The counters restart with the server: start over rather than wait for them to catch up.
+    const restarted = data.frames.length === 0 && data.samples.length === 0 && status.uptime_s < 10 && lastSample > SAMPLE_HZ * 15;
+    if (restarted) { samples = []; frames = []; lastSample = lastFrame = 0; }
+    if (data.samples.length) { samples = samples.concat(data.samples).slice(-MOTION_S * SAMPLE_HZ); lastSample = samples[samples.length - 1][0]; }
+    if (data.frames.length) { readDecisions(data.frames); lastFrame = frames[frames.length - 1].n; }
+    el("offline").textContent = "";
+    drawMotion(); drawBands(); drawMeter(); drawHeadline();
+  } catch (problem) {
+    el("offline").textContent = "Lost contact with the device. Retrying…";
+  }
+  setTimeout(poll, 250);
+}
+poll();
+</script>
+</body>
+</html>

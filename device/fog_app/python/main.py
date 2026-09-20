@@ -8,7 +8,7 @@
 #   port 7000  the diagnostics page in ../assets (fog_core.py): live charts, sample-rate check and
 #              labelled recording. It never drives the cue while the device API is running.
 #
-# device_server.py, streaming_detector.py and cadence.py are copied next to this file by ../deploy.sh. If the
+# device_server.py, streaming_detector.py, cadence.py and demo_page.html are copied next to this file by ../deploy.sh. If the
 # device API cannot start (file missing, package missing), the app falls back to fog_core's own
 # detector driving the cue, so the board still works on its own.
 

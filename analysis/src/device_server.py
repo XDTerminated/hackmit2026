@@ -33,6 +33,7 @@ import random
 import sqlite3
 import sys
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -42,6 +43,7 @@ import numpy as np
 import uvicorn
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cadence import CadenceTracker  # noqa: E402
@@ -51,6 +53,7 @@ ROOT = Path(__file__).resolve().parents[2]
 VECTOR_DIR = ROOT / "test_vectors"
 CLEAN_DIR = ROOT / "data" / "daphnet" / "clean"
 DB_PATH = Path(os.environ.get("FOG_DB", ROOT / "analysis" / "device.sqlite3"))
+DEMO_PAGE = Path(__file__).resolve().parent / "demo_page.html"   # deploy.sh ships it next to this file
 
 FIRMWARE = "0.1.0"
 SAMPLE_RATE_HZ = 64
@@ -177,6 +180,8 @@ class LiveSource(SampleSource):
 
 
 def build_source(args) -> SampleSource:
+    if args.csv:
+        return CsvReplaySource(args.csv)
     if args.source == "daphnet":
         path = CLEAN_DIR / f"{args.subject}.csv"
         if not path.exists():
@@ -292,6 +297,11 @@ class Device:
     # Called with (on, tempo_bpm) when the device's own buzzer should start or stop.
     cue_hook: Callable[[bool, int], None] | None = None
     cadence: CadenceTracker = field(default_factory=CadenceTracker)
+    # What the demo page draws: the last 12 s of |acceleration| and the last 2 minutes of frames.
+    recent_samples: deque = field(default_factory=lambda: deque(maxlen=SAMPLE_RATE_HZ * 12))
+    recent_frames: deque = field(default_factory=lambda: deque(maxlen=240))
+    n_samples: int = 0
+    n_frames: int = 0
     saved_cadence: int | None = None
 
     def cue_tempo(self) -> int:
@@ -475,6 +485,8 @@ class Device:
             for ax, ay, az in block:
                 magnitude = math.sqrt(ax * ax + ay * ay + az * az)
                 self.cadence.push(magnitude)
+                self.n_samples += 1
+                self.recent_samples.append((self.n_samples, round(magnitude)))
                 got = detector.push_magnitude(magnitude)
                 if got is not None:
                     frame = got
@@ -519,6 +531,12 @@ class Device:
 
         if self.open_event and self.cue_active:
             self.open_event.peak_fi = max(self.open_event.peak_fi, frame.freeze_index)
+
+        self.n_frames += 1
+        self.recent_frames.append(dict(
+            n=self.n_frames, freeze_index=round(frame.freeze_index, 3), loco_power=round(frame.loco_power),
+            freeze_power=round(frame.total_power - frame.loco_power), positive=bool(frame.positive),
+            stopping=bool(frame.stopping), armed=bool(frame.armed), cue=self.cue_active, state=self.state))
 
         if self.state != previous_state or self.cue_active:
             await self.broadcast("status", self.status())
@@ -777,6 +795,26 @@ def create_app(device: Device, debug_routes: bool = True) -> FastAPI:
             "walking_resumed_rate": round(total_resumed / total_outcome, 3) if total_outcome else None,
         }
 
+    # -- demo page --------------------------------------------------------
+    # Read-only, and polled over REST on purpose: a WebSocket client counts as a connected app, and a
+    # projector page must never make the device believe a phone is there to play the cue.
+    @app.get(api + "/frames")
+    def get_frames(since_frame: int = 0, since_sample: int = 0):
+        preset = PRESETS[device.settings["sensitivity"]]
+        return {
+            "status": device.status(),
+            "thresholds": {"freeze_index": preset["fi_threshold"], "band_power": preset["power_threshold"],
+                           "walking_power": DetectorParams().walk_loco_power},
+            "frames": [f for f in list(device.recent_frames) if f["n"] > since_frame],
+            "samples": [s for s in list(device.recent_samples) if s[0] > since_sample],
+        }
+
+    @app.get("/demo")
+    def demo_page():
+        if not DEMO_PAGE.exists():
+            raise HTTPException(404, "demo_page.html was not deployed next to device_server.py")
+        return FileResponse(DEMO_PAGE, media_type="text/html")
+
     # -- replay only ------------------------------------------------------
     async def debug_freeze():
         """Replay-only. Must never exist on the board: it would show a cue the detector
@@ -838,6 +876,7 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--source", choices=["vector", "daphnet"], default="vector")
+    parser.add_argument("--csv", type=Path, help="replay this recording instead (columns ax_mg, ay_mg, az_mg)")
     parser.add_argument("--scenario", default="walk_then_freeze",
                         help="test vector to loop when --source vector")
     parser.add_argument("--subject", default="S01", help="Daphnet subject when --source daphnet")

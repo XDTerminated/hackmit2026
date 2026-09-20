@@ -33,7 +33,9 @@ sample rate and lost samples); `--verify` checks it against the batch code, `--c
 **Device (runs on the board).** `device/fog_app/` is the App Lab app: the sketch samples the IMU at 64 Hz and
 pushes each sample over the Bridge; `python/main.py` feeds two consumers. Port 8000 is the device API
 (`analysis/src/device_server.py`, Khai's server: presets and settings, SQLite event log, REST + WebSocket); it
-owns the cue and plays it at the wearer's own cadence (auto tempo, `cadence.py`). Port 7000 is the diagnostics page (`fog_core.py`):
+owns the cue and plays it at the wearer's own cadence (auto tempo, `cadence.py`). `http://<board>:8000/demo` is the demo screen (`demo_page.html`, fed by `GET /api/v1/frames`): what the real detector sees and
+decides, for a projector; it polls rather than use the WebSocket so it never counts as a connected phone.
+Port 7000 is the diagnostics page (`fog_core.py`):
 live charts, sample-rate check, labelled recording. If the API cannot start, the page's detector drives the cue.
 `bash device/fog_app/deploy.sh` deploys over USB (App Lab's adb), ships `device_server.py`,
 `streaming_detector.py` and `cadence.py` with the app, and forwards both ports to localhost. The app is the board's startup app.

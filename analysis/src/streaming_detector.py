@@ -74,6 +74,7 @@ class Frame:
     positive: bool         # raw detector output for this window
     armed: bool            # walking gate state when this frame was evaluated
     cue_on: bool           # what the buzzer does
+    stopping: bool = False # the stop rule rejected this window (band power still collapsing)
 
 
 class SampleClock:
@@ -173,7 +174,7 @@ class StreamingDetector:
         self.walk_history[self.walk_head] = loco > p.walk_loco_power
         self.walk_head = (self.walk_head + 1) % p.gate_lookback_frames
         self.n_frames += 1
-        return Frame(self.n_samples - 1, freeze_index, total, loco, positive, armed, self.cue_on)
+        return Frame(self.n_samples - 1, freeze_index, total, loco, positive, armed, self.cue_on, stopping)
 
 
 def run(detector, magnitudes=None, axes=None):

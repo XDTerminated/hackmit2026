@@ -108,6 +108,14 @@ are recordings from the real sensor.
 | `POST /cue/test` | | 2 s of the current cue settings, for setup |
 | `POST /time` | `{"now": "2026-09-19T15:04:05Z"}` | set the device clock. The app sends this on every connect |
 
+## Demo screen
+
+`GET /demo` (not under `/api/v1`) is a read-only page for a projector: the shin signal, the power of the walking
+and tremble bands, the freeze index against its line, the measured pace, the cue with a visual beat, and a list of
+decisions, including the stops the stop rule refused to cue. It reads `GET /api/v1/frames?since_frame=&since_sample=`
+(`status`, the active preset's `thresholds`, new detector `frames` and raw `samples`). It polls over REST on purpose:
+a WebSocket client counts as a connected app and would stop the device falling back to its own cue output.
+
 ## Status
 
 `GET /status`
