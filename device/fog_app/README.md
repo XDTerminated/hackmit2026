@@ -108,6 +108,14 @@ have gone wrong here before:
   devices from reaching each other. Use a phone hotspot. Measured on one: API median 29 ms, a cue message
   reaches a client in about 50 ms.
 
+- **No phone data to spare: use the laptop as the hotspot.** Windows Settings > Network & internet > Mobile
+  hotspot shares the laptop's connection (hotel Wi-Fi included) on its own network; the board and the phone
+  join that, and the phone keeps internet through the laptop. The board knows it as `laptop-hotspot`
+  (priority 110, above the phone hotspots) and gets an address in 192.168.137.x. Tested on the hotel Wi-Fi,
+  where laptop and board could not reach each other directly (client isolation, confirmed): API median 34 ms
+  through the laptop hotspot, no lost samples. Windows switches the hotspot off when nothing is connected for
+  a while (turn off "Power saving" on that settings page), and the laptop has to stay within Wi-Fi range.
+
 The address changes with the network; `arduino.local` does not. `deploy.sh` prints both.
 
 ### Running from a power bank with no laptop

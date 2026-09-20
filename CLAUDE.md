@@ -43,7 +43,8 @@ Verified on the board: 64.0 Hz, no lost samples with both consumers, gravity 104
 1 mg^2, API reachable over USB and over the HackMIT Wi-Fi, WebSocket cue messages, no debug route.
 `device/bringup/` is the original wiring-test sketch. Wi-Fi: the board must share a network with the phone; a phone
 hotspot works (API median 29 ms, cue message ~50 ms), guest/hotel networks do not (captive portal, client
-isolation). Auto-join priorities are set on the board with nmcli (hotspots first, hotel Wi-Fi disabled); see
+isolation, confirmed on the Hyatt network); with no phone data to spare, the laptop's Windows Mobile hotspot works
+(`laptop-hotspot`, board at 192.168.137.x, API median 34 ms). Auto-join priorities are set on the board with nmcli (hotspots first, hotel Wi-Fi disabled); see
 `device/fog_app/README.md`.
 
 **App (type-checks and bundles; not yet exercised on a phone against the board).** Expo SDK 57, screens Now,
